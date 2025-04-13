@@ -225,6 +225,7 @@ current_counts = prediction_and_results[['prediction_for', 'prediction_against']
 current_counts = current_counts.to_frame().reset_index()
 current_counts.columns = ['vote_category', 'votes']
 current_counts['pct'] = (current_counts['votes'] / current_counts['votes'].sum()).round(2)
+current_counts.to_csv(PREDICTION_FOLDER / 'predicted_results_to_date.csv', index=False)
 
 # ward_data = election_reconstruction.data.turnout_data
 # ward_groupby = ward_data.groupby('ward').agg(AGGREGATE_COLS).reset_index()
