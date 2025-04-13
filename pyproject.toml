@@ -1,0 +1,30 @@
+[project]
+name = "fcs-may25"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "jreakin", email = "johnreakin@gmail.com" }
+]
+requires-python = ">=3.12.8"
+dependencies = [
+    "icecream>=2.1.4",
+    "marimo[recommended]>=0.12.8",
+    "matplotlib>=3.10.1",
+    "pandas>=2.2.3",
+    "polars>=1.27.0",
+    "pyarrow>=19.0.1",
+    "pydantic>=2.11.3",
+    "scikit-learn>=1.6.1",
+    "scipy>=1.15.2",
+    "seaborn>=0.13.2",
+    "sqlmodel>=0.0.24",
+    "statsmodels>=0.14.4",
+]
+
+[project.scripts]
+fcs-may25 = "fcs_may25:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
