@@ -220,6 +220,7 @@ prediction_by_age_range['pct_for'] = (prediction_by_age_range['prediction_for'] 
 prediction_by_age_range['pct_against'] = (prediction_by_age_range['prediction_against'] / prediction_by_age_range['total_votes']).round(2)
 
 prediction_and_results.to_csv(PREDICTION_FOLDER / 'findlay_results_may6.csv', index=False)
+prediction_by_ward.to_csv(PREDICTION_FOLDER / 'findlay_results_may6_by_ward.csv', index=False)
 current_counts = prediction_and_results[['prediction_for', 'prediction_against']].sum().rename('votes')
 current_counts = current_counts.to_frame().reset_index()
 current_counts.columns = ['vote_category', 'votes']
