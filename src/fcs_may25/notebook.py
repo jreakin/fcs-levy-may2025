@@ -6,7 +6,7 @@ app = marimo.App()
 
 @app.cell
 def _(mo):
-    mo.md(r"# FCS Tax Levy - May 6 Election Breakdown")
+    mo.md(r"""# FCS Tax Levy - May 6 Election Breakdown""")
     return
 
 
@@ -20,7 +20,7 @@ def _():
 
 @app.cell
 def _(mo):
-    mo.md(r"## November 2024 Results")
+    mo.md(r"""## November 2024 Results""")
     return
 
 
@@ -32,7 +32,7 @@ def _(data, mo):
 
 @app.cell
 def _(mo):
-    mo.md(r"## November Breakdown: By Age Range")
+    mo.md(r"""## November Breakdown: By Age Range""")
     return
 
 
@@ -46,7 +46,7 @@ def _(data, mo):
 
 @app.cell
 def _(mo):
-    mo.md(r"## November Breakdown: By Ward")
+    mo.md(r"""## November Breakdown: By Ward""")
     return
 
 
@@ -84,7 +84,7 @@ def _(data, mo, pd):
 
 @app.cell
 def _(mo):
-    mo.md(r"## May Turnout: By Precinct")
+    mo.md(r"""## May Turnout: By Precinct""")
     return
 
 
@@ -99,7 +99,7 @@ def _(data, mo):
 
 @app.cell
 def _(mo):
-    mo.md(r"## May Turnout: By Ward")
+    mo.md(r"""## May Turnout: By Ward""")
     return
 
 
@@ -112,7 +112,7 @@ def _(may_vs_nov, mo):
 
 @app.cell
 def _(mo):
-    mo.md(r"## May Turnout: By Age Range")
+    mo.md(r"""## May Turnout: By Age Range""")
     return
 
 
@@ -127,7 +127,7 @@ def _(data, mo):
 
 @app.cell
 def _(mo):
-    mo.md(r"## May Turnout: Predicted Votes By Ward")
+    mo.md(r"""## May Turnout: Predicted Votes By Ward""")
     return
 
 
@@ -154,13 +154,13 @@ def _(data, mo):
 
 @app.cell
 def _(mo):
-    mo.md(r"## Comparisons")
+    mo.md(r"""## Comparisons""")
     return
 
 
 @app.cell
 def _(mo):
-    mo.md(r"### Vote Makeup By Ward: November")
+    mo.md(r"""### Vote Makeup By Ward: November""")
     return
 
 
@@ -179,7 +179,7 @@ def _(mo, nov_turnout_ward):
 
 @app.cell
 def _(mo):
-    mo.md(r"### Vote Makeup By Ward: May")
+    mo.md(r"""### Vote Makeup By Ward: May""")
     return
 
 
@@ -192,7 +192,7 @@ def _(may_turnout_by_ward, mo):
 
 @app.cell
 def _(mo):
-    mo.md(r"### Vote Makeup By Age Range: November")
+    mo.md(r"""### Vote Makeup By Age Range: November""")
     return
 
 
@@ -205,7 +205,7 @@ def _(mo, nov_turnout_age):
 
 @app.cell
 def _(mo):
-    mo.md(r"### Vote Makeup By Age Range: May")
+    mo.md(r"""### Vote Makeup By Age Range: May""")
     return
 
 
@@ -218,7 +218,7 @@ def _(may_by_age_range, mo):
 
 @app.cell
 def _(mo):
-    mo.md(r"### Vote Makeup By Age Range: Comparison")
+    mo.md(r"""### Vote Makeup By Age Range: Comparison""")
     return
 
 
