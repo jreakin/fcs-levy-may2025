@@ -1,9 +1,15 @@
 from pathlib import Path
+from typing import Union
+import warnings
+
 import polars as pl
 from datetime import datetime
 import numpy as np
 import pandas as pd
 from icecream import ic
+
+warnings.filterwarnings('ignore')
+
 
 # Setup
 DOWNLOAD_PATH = Path.home() / 'Downloads'
@@ -14,6 +20,8 @@ PREDICTION_FOLDER = DATA_PATH / 'may25_predictions'
 RESULTS = DATA_PATH / 'NOV24-FCS-TAX.csv'
 EARLY_VOTE = DATA_PATH / 'may26_ev'
 DATA = VOTERFILE_PATH / "data/ohio/voterfile/ohio-statewide"
+
+DataFrameType = Union[pl.LazyFrame, pd.DataFrame]
 
 class FindlayVoterFileConfig:
     levy_election_date = datetime.strptime("2025-05-06", "%Y-%m-%d").date()
@@ -40,7 +48,7 @@ class FindlayVoterFileConfig:
     ELECTION_COLUMNS = []
 
 class FindlayVoterFile:
-    data: pl.LazyFrame
+    data: pl.DataFrame
     config: FindlayVoterFileConfig
     model_data: pd.DataFrame
     weighted_data: pd.DataFrame
@@ -48,6 +56,7 @@ class FindlayVoterFile:
     weighted_precinct_category_counts: pd.DataFrame
     turnout_data: pd.DataFrame
     current_votes: pd.DataFrame
+    election_results: pd.DataFrame
     _categories: list[str]
     _last4_primaries: list[str]
     _last4_generals: list[str]
@@ -130,7 +139,7 @@ class FindlayVoterFile:
         self.data['NO_IN_NOV_YES_IN_MAY'] = ~self.data['VOTED_IN_NOV'] & self.data['VOTED_MAY_LEVY']
     
     def load_model_data(self):
-        model_data = self.data[self.config.BASE_COLUMNS + self.config.ELECTION_COLUMNS]
+        model_data: pd.DataFrame = self.data[self.config.BASE_COLUMNS + self.config.ELECTION_COLUMNS]
         model_data[self.config.ELECTION_COLUMNS] = model_data[self.config.ELECTION_COLUMNS].map(lambda x: 1 if x else 0)
         model_data['P_SCORE'] = model_data[self._last4_primaries].sum(axis=1).round(2)
         model_data['G_SCORE'] = model_data[self._last4_generals].sum(axis=1).round(2)
@@ -161,6 +170,8 @@ class FindlayVoterFile:
         self.election_results = pd.read_csv(RESULTS).dropna(how='all', axis=1)
         self.election_results['for'] = pd.to_numeric(self.election_results['for'], errors='coerce').fillna(0)
         self.election_results['ward'] = self.election_results['precinct'].str[:-1]
+        _election_cols = list(self.election_results.columns)
+        self.election_results = self.election_results[[_election_cols.pop(_election_cols.index('ward'))] + _election_cols]
         return self
 
 
