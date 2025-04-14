@@ -3,19 +3,19 @@ import marimo
 __generated_with = "0.12.8"
 app = marimo.App()
 
-
-@app.cell
-def _(mo):
-    mo.md(r"""# FCS Tax Levy - May 6 Election Breakdown""")
-    return
-
-
 @app.cell
 def _():
     import marimo as mo
     import fcs_may25.main as data
     import pandas as pd
     return data, mo, pd
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""# FCS Tax Levy - May 6 Election Breakdown""")
+    return
+
 
 
 @app.cell
