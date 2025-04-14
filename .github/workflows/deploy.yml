@@ -37,17 +37,22 @@ jobs:
           uv pip install matplotlib>=3.10.1 pandas>=2.2.3 numpy>=1.26.0 seaborn>=0.13.2 scikit-learn>=1.6.1 statsmodels>=0.14.4 icecream>=2.1.4
 
       - name: Create output directory
-        run: mkdir -p src/fcs_may25/notebook
+        run: |
+          mkdir -p _site
+          mkdir -p src/fcs_may25/notebook
 
       - name: Build Marimo notebook
         run: |
           . .venv/bin/activate
-          marimo export html-wasm src/fcs_may25/notebook.py -o src/fcs_may25/notebook --mode run
+          marimo export html-wasm src/fcs_may25/notebook.py -o _site --mode run
+          ls -la _site
+          echo "Content of _site directory:"
+          find _site -type f
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: src/fcs_may25/notebook
+          path: _site
 
   deploy:
     needs: build
