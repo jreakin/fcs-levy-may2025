@@ -16,7 +16,8 @@ jobs:
 
       - name: 📦 Install dependencies
         run: |
-          uv sync
+          uv sync |
+          echo "pwd: $(pwd)"
 
       # ... checkout and install dependencies
 
