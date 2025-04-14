@@ -174,4 +174,3 @@ cython_debug/
 .pypirc
 
 # JRE Ignore Folders
-data/may26_ev
