@@ -30,16 +30,16 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv venv
-          source .venv/bin/activate
+          uv pip install marimo[recommended]>=0.12.8
           uv pip install -e .
-          uv sync --reinstall
+          uv pip install matplotlib>=3.10.1 pandas>=2.2.3 numpy>=1.26.0 seaborn>=0.13.2 scikit-learn>=1.6.1 statsmodels>=0.14.4 icecream>=2.1.4
+
+      - name: Create output directory
+        run: mkdir -p src/fcs_may25/notebook
 
       - name: Build Marimo notebook
         run: |
-          pwd
-          ls -la
-          uv run marimo export html-wasm src/fcs_may25/notebook.py -o src/fcs_may25/notebook --mode run
+          marimo export html-wasm src/fcs_may25/notebook.py -o src/fcs_may25/notebook --mode run
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
@@ -58,8 +58,6 @@ jobs:
         id-token: write
 
     steps:
-        - name: 🌐 Deploy to GitHub Pages
+        - name: Deploy to GitHub Pages
           id: deployment
           uses: actions/deploy-pages@v4
-          with:
-              artifact_name: github-pages
