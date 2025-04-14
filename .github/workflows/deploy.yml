@@ -14,9 +14,9 @@ jobs:
         run: |
           pip install uv
 
-      - name: 📦 Install dependencies
-        run: |
-          uv sync
+      # - name: 📦 Install dependencies
+      #   run: |
+      #     uv sync
 
       # ... checkout and install dependencies
 
