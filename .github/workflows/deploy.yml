@@ -14,7 +14,9 @@ jobs:
 
       - name: 📄 Export notebook
         run: |
-          marimo export html-wasm src/fcs_may25/notebook.py -o src/fcs_may25/output --mode run
+          pip install uv
+          uv sync
+          uv run marimo export html-wasm src/fcs_may25/notebook.py -o src/fcs_may25/output --mode run
 
       - name: 📦 Upload Pages Artifact
         uses: actions/upload-pages-artifact@v3
