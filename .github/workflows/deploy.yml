@@ -38,7 +38,7 @@ jobs:
         run: |
           pwd
           ls -la
-          marimo export html-wasm src/fcs_may25/notebook.py -o src/fcs_may25/notebook --mode run
+          uv run marimo export html-wasm src/fcs_may25/notebook.py -o src/fcs_may25/notebook --mode run
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
