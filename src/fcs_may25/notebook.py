@@ -13,7 +13,7 @@ def _(mo):
 @app.cell
 def _():
     import marimo as mo
-    import main as data
+    import fcs_may25.main as data
     import pandas as pd
     return data, mo, pd
 

@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import lsq_linear
 from icecream import ic
-from src.fcs_may25.data_loader import ElectionReconstruction, PREDICTION_FOLDER
+from fcs_may25.data_loader import ElectionReconstruction, PREDICTION_FOLDER
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import classification_report, accuracy_score
@@ -134,7 +134,7 @@ age_beta_map = {age: beta for age, beta in zip(age_groups, beta_k_clipped)}
 november_turnout['prob_for'] = november_turnout['AGE_RANGE'].map(age_beta_map)
 
 # Ensure all probabilities are valid (between 0 and 1) and not NaN
-november_turnout['prob_for'] = november_turnout['prob_for'].fillna(0.5)  # Replace NaN with 0.5
+november_turnout['prob_for'] = november_turnout['prob_for'].fillna(0)  # Replace NaN with 0.5
 november_turnout['prob_for'] = november_turnout['prob_for'].clip(0, 1)  # Clip to [0, 1]
 
 # Step 3: Simulate individual votes based on these probabilities
