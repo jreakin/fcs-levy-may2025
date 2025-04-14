@@ -10,12 +10,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: 📦 Install uv
+        run: |
+          pip install uv
+
+      - name: 📦 Install dependencies
+        run: |
+          uv sync
+
       # ... checkout and install dependencies
 
       - name: 📄 Export notebook
         run: |
-          pip install uv |
-          uv sync |
           uv run marimo export html-wasm src/fcs_may25/notebook.py -o src/fcs_may25/output --mode run
 
       - name: 📦 Upload Pages Artifact
