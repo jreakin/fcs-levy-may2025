@@ -45,7 +45,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: src/fcs_may25/output
+          path: src/fcs_may25/notebook
 
   deploy:
     environment:
