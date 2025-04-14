@@ -22,7 +22,7 @@ jobs:
 
       - name: 📄 Export notebook
         run: |
-          uv run marimo export html-wasm src/fcs_may25/notebook.py -o src/fcs_may25/output --mode run
+          uv run marimo export html-wasm src/fcs_may25/notebook.py -o src/fcs_may25 --mode run
 
       - name: 📦 Upload Pages Artifact
         uses: actions/upload-pages-artifact@v3
