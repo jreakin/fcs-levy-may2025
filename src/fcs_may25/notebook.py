@@ -1,22 +1,22 @@
 import marimo
 
 __generated_with = "0.12.8"
+app = marimo.App(width="full", auto_download=["html"])
 
-app = marimo.App()
 
 @app.cell
 def _():
     import marimo as mo
     import fcs_may25.main as data
     import pandas as pd
-    return data, mo, pd
+    import matplotlib.pyplot as plt
+    return data, mo, pd, plt
 
 
 @app.cell
 def _(mo):
     mo.md(r"""# FCS Tax Levy - May 6 Election Breakdown""")
     return
-
 
 
 @app.cell
@@ -27,7 +27,7 @@ def _(mo):
 
 @app.cell
 def _(data, mo):
-    mo.ui.table(data.election_results)
+    mo.ui.table(data.election_results, page_size=40, max_columns=40)
     return
 
 
@@ -41,7 +41,7 @@ def _(mo):
 def _(data, mo):
     nov_turnout_age = data.november_turnout.groupby('AGE_RANGE')['SOS_VOTERID'].count().reset_index().rename(columns={'SOS_VOTERID': 'VOTES'})
     nov_turnout_age['PERCENTAGE'] = (nov_turnout_age['VOTES'] / nov_turnout_age['VOTES'].sum()).round(2)
-    mo.ui.table(nov_turnout_age)
+    mo.ui.table(nov_turnout_age, page_size=40, max_columns=40)
     return (nov_turnout_age,)
 
 
@@ -55,7 +55,7 @@ def _(mo):
 def _(data, mo):
     nov_turnout_ward = data.november_turnout.groupby('ward')['SOS_VOTERID'].count().reset_index().rename(columns={'SOS_VOTERID': 'VOTES'})
     nov_turnout_ward['PERCENTAGE'] = (nov_turnout_ward['VOTES'] / nov_turnout_ward['VOTES'].sum()).round(2)
-    mo.ui.table(nov_turnout_ward)
+    mo.ui.table(nov_turnout_ward, page_size=40, max_columns=40)
     return (nov_turnout_ward,)
 
 
@@ -77,7 +77,6 @@ def _(data, mo, pd):
         columns=[data.november_turnout['AGE_RANGE']],
         margins=True,
         margins_name='Total',
-        normalize=True
     )
     mo.ui.table(ward_precinct_turnout)
     return (ward_precinct_turnout,)
@@ -94,7 +93,7 @@ def _(data, mo):
     may_vs_nov = data.november_turnout.groupby(['ward', 'PRECINCT_NAME'])[['VOTED_MAY_LEVY', 'VOTED_IN_NOV']].sum()
     may_vs_nov['MAY_PCT_OF_VOTES'] = (may_vs_nov['VOTED_MAY_LEVY'] / may_vs_nov['VOTED_MAY_LEVY'].sum()).round(2)
     may_vs_nov['NOV_PCT_OF_VOTES'] = (may_vs_nov['VOTED_IN_NOV'] / may_vs_nov['VOTED_IN_NOV'].sum()).round(2)
-    mo.ui.table(may_vs_nov)
+    mo.ui.table(may_vs_nov, page_size=40, max_columns=40)
     return (may_vs_nov,)
 
 
@@ -107,7 +106,7 @@ def _(mo):
 @app.cell
 def _(may_vs_nov, mo):
     may_turnout_by_ward = may_vs_nov.groupby('ward')[['VOTED_MAY_LEVY', 'VOTED_IN_NOV', 'MAY_PCT_OF_VOTES', 'NOV_PCT_OF_VOTES']].sum().reset_index()
-    mo.ui.table(may_turnout_by_ward)
+    mo.ui.table(may_turnout_by_ward, page_size=40, max_columns=40)
     return (may_turnout_by_ward,)
 
 
@@ -122,7 +121,7 @@ def _(data, mo):
     may_by_age_range = data.november_turnout.groupby('AGE_RANGE')[['VOTED_MAY_LEVY', 'VOTED_IN_NOV']].sum().reset_index()
     may_by_age_range['MAY_PCT_OF_VOTES'] = (may_by_age_range['VOTED_MAY_LEVY'] / may_by_age_range['VOTED_MAY_LEVY'].sum()).round(2)
     may_by_age_range['NOV_PCT_OF_VOTES'] = (may_by_age_range['VOTED_IN_NOV'] / may_by_age_range['VOTED_IN_NOV'].sum()).round(2)
-    mo.ui.table(may_by_age_range)
+    mo.ui.table(may_by_age_range, page_size=40, max_columns=40)
     return (may_by_age_range,)
 
 
@@ -149,7 +148,7 @@ def _(data, mo):
             'total': 'total_in_nov'})
     p_cols = list(predicted_results.columns)
     predicted_results = predicted_results[[p_cols.pop(p_cols.index('ward'))] + p_cols]
-    mo.ui.table(predicted_results)
+    mo.ui.table(predicted_results, page_size=40, max_columns=40)
     return p_cols, predicted_results
 
 
@@ -173,6 +172,8 @@ def _(mo, nov_turnout_ward):
         labels=nov_turnout_ward['ward'],
         legend=False,
         ylabel='',
+        title='November Turnout by Ward',
+        figsize=(10, 5)
     )
     mo.mpl.interactive(nov_ward_pie)
     return (nov_ward_pie,)
@@ -186,9 +187,39 @@ def _(mo):
 
 @app.cell
 def _(may_turnout_by_ward, mo):
-    may_ward_pie = may_turnout_by_ward['MAY_PCT_OF_VOTES'].plot(kind='pie', autopct='%1.1f%%', labels=may_turnout_by_ward['ward'], legend=False, ylabel='')
+    may_ward_pie = may_turnout_by_ward['MAY_PCT_OF_VOTES'].plot(
+        kind='pie', 
+        autopct='%1.1f%%', 
+        labels=may_turnout_by_ward['ward'], 
+        legend=False, 
+        ylabel='', 
+        title='May Turnout by Ward',
+        figsize=(10, 5)
+    )
     mo.mpl.interactive(may_ward_pie)
     return (may_ward_pie,)
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""### Vote Makeup By Ward: Comparison""")
+    return
+
+
+@app.cell
+def _(may_turnout_by_ward, mo, plt):
+    may_vs_nov_bar_ward = may_turnout_by_ward.plot(
+        kind='bar', 
+        x='ward',
+        y=['MAY_PCT_OF_VOTES', 'NOV_PCT_OF_VOTES'], 
+        ylabel='Percentage of Votes', 
+        legend=True, 
+        title='Vote Makeup by Ward: May vs November', 
+        figsize=(10, 5)
+        )
+    plt.xticks(rotation=90, ha='right')
+    mo.mpl.interactive(may_vs_nov_bar_ward)
+    return (may_vs_nov_bar_ward,)
 
 
 @app.cell
@@ -199,7 +230,15 @@ def _(mo):
 
 @app.cell
 def _(mo, nov_turnout_age):
-    nov_age_range_pie = nov_turnout_age['PERCENTAGE'].plot(kind='pie', autopct='%1.1f%%', labels=nov_turnout_age['AGE_RANGE'], legend=False, ylabel='')
+    nov_age_range_pie = nov_turnout_age['PERCENTAGE'].plot(
+        kind='pie', 
+        autopct='%1.1f%%', 
+        labels=nov_turnout_age['AGE_RANGE'], 
+        legend=False, 
+        ylabel='', 
+        title='November Turnout by Age Range',
+        figsize=(10, 5)
+        )
     mo.mpl.interactive(nov_age_range_pie)
     return (nov_age_range_pie,)
 
@@ -212,7 +251,15 @@ def _(mo):
 
 @app.cell
 def _(may_by_age_range, mo):
-    may_age_range_pie = may_by_age_range['MAY_PCT_OF_VOTES'].plot(kind='pie', autopct='%1.1f%%', labels=may_by_age_range['AGE_RANGE'], legend=False, ylabel='')
+    may_age_range_pie = may_by_age_range['MAY_PCT_OF_VOTES'].plot(
+        kind='pie',
+        autopct='%1.1f%%', 
+        labels=may_by_age_range['AGE_RANGE'], 
+        legend=False, 
+        ylabel='', 
+        title='May Turnout by Age Range',
+        figsize=(10, 5)
+        )
     mo.mpl.interactive(may_age_range_pie)
     return (may_age_range_pie,)
 
@@ -226,7 +273,15 @@ def _(mo):
 @app.cell
 def _(may_by_age_range, mo):
     # Make a combined bar chart of the vote makeup by age range for both November and May side by side
-    may_age_range_bar = may_by_age_range.plot(kind='bar', x='AGE_RANGE', y=['MAY_PCT_OF_VOTES', 'NOV_PCT_OF_VOTES'], ylabel='Percentage of Votes', legend=True)
+    may_age_range_bar = may_by_age_range.plot(
+        kind='bar', 
+        x='AGE_RANGE', 
+        y=['MAY_PCT_OF_VOTES', 'NOV_PCT_OF_VOTES'], 
+        ylabel='Percentage of Votes', 
+        legend=True, 
+        title='Vote Makeup by Age Range: May vs November',
+        figsize=(10, 5)
+        )
     mo.mpl.interactive(may_age_range_bar)
     return (may_age_range_bar,)
 
