@@ -60,6 +60,23 @@ wheels = [
 ]
 
 [[package]]
+name = "category-encoders"
+version = "2.8.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "pandas" },
+    { name = "patsy" },
+    { name = "scikit-learn" },
+    { name = "scipy" },
+    { name = "statsmodels" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/89/32/f5dff088ebae54d5464124298a9262bdd07c55558ba7e9b961be7ecdb0e6/category_encoders-2.8.1.tar.gz", hash = "sha256:57af8a23bde3cf622ee7e17c11547011795e4d337839d40cbd16c36b67291b33", size = 57856 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/92/fb/908cb215a30b117bb079a767176038599a5447f2506e21aa2e90d0aabfff/category_encoders-2.8.1-py3-none-any.whl", hash = "sha256:ba77bde0a0afe13732b04997635b1ae82569e42c9696bc361c68674197988303", size = 85710 },
+]
+
+[[package]]
 name = "certifi"
 version = "2025.1.31"
 source = { registry = "https://pypi.org/simple" }
@@ -219,6 +236,7 @@ name = "fcs-may25"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "category-encoders" },
     { name = "icecream" },
     { name = "ipynb" },
     { name = "marimo", extra = ["recommended"] },
@@ -237,6 +255,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "category-encoders", specifier = ">=2.8.1" },
     { name = "icecream", specifier = ">=2.1.4" },
     { name = "ipynb", specifier = ">=0.5.1" },
     { name = "marimo", extras = ["recommended"], specifier = ">=0.12.8" },
