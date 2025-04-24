@@ -2,18 +2,19 @@ from datetime import datetime
 from enum import Enum, StrEnum
 from pathlib import Path
 
-class FilePaths(Enum):
-    DOWNLOAD_PATH = Path.home() / 'Downloads'
-    VOTERFILE_PATH = Path.home() / 'PyCharmProjects' / 'state-voterfiles'
-    DATA_PATH = Path(__file__).parent / 'data'
-    PREDICTION_FOLDER = DATA_PATH / 'may25_predictions'
-    IMAGE_PATH = DATA_PATH / 'images'
 
-    RESULTS = DATA_PATH / 'NOV24-FCS-TAX.csv'
-    EARLY_VOTE = DATA_PATH / 'may26_ev'
-    DATA = VOTERFILE_PATH / "data/ohio/voterfile/ohio-statewide"
+class FilePaths:
+    DOWNLOAD_PATH: Path = Path.home() / 'Downloads'
+    VOTERFILE_PATH: Path = Path.home() / 'PyCharmProjects' / 'state-voterfiles'
+    DATA_PATH: Path = Path(__file__).parent / 'data'
+    PREDICTION_FOLDER: Path = DATA_PATH / 'may25_predictions'
+    IMAGE_PATH: Path = DATA_PATH / 'images'
 
-class FindlayVoterFileColumns(StrEnum):
+    RESULTS: Path = DATA_PATH / 'NOV24-FCS-TAX.csv'
+    EARLY_VOTE: Path = DATA_PATH / 'may26_ev'
+    DATA: Path = VOTERFILE_PATH / "data/ohio/voterfile/ohio-statewide"
+
+class FindlayVoterFileColumns:
     PARTY_AFFILIATION = 'PARTY_AFFILIATION'
     AGE = 'AGE'
     AGE_RANGE = 'AGE_RANGE'
@@ -25,7 +26,17 @@ class FindlayVoterFileColumns(StrEnum):
     CITY_SCHOOL_DISTRICT = 'CITY_SCHOOL_DISTRICT'
     COUNTY_NUMBER = 'COUNTY_NUMBER'
     COUNTY_NAME = 'COUNTY_NAME'
-    STATE_ID = 'STATE_ID'
+    VOTER_ID = 'SOS_VOTERID'
+    VOTED_MAY_LEVY = 'VOTED_MAY_LEVY'
+    VOTED_IN_BOTH = 'VOTED_IN_BOTH'
+
+class FindlayEarlyVoteColumns:
+    VOTER_ID = 'STATE ID#'
+    DATE_ENTERED = 'DATE ENTERED:'
+    DATE_RETURNED = 'DATE RETURNED:'
+    PRECINCT_NAME = 'precinct'
+    WARD = 'ward'
+    VOTE_METHOD = 'Vote Method'
 
 class FindlayMLModelCategories:
     AGE_RANGE_CAT = 'AGE_RANGE_CAT'
@@ -36,38 +47,11 @@ class FindlayMLModelCategories:
     P_SCORE = 'P_SCORE'
     G_SCORE = 'G_SCORE'
     AGE = 'AGE'
-    _interaction_features = []
-    _category_features = []
-    _high_cardinality_features = []
-    _numerical_features = []
+    interaction_features = [AGE_WARD, AGE_PRECINCT, AGE_PARTY]
+    category_features = [PARTY_CAT, AGE_RANGE_CAT]
+    high_cardinality_features = [FindlayVoterFileColumns.PRECINCT_NAME, FindlayVoterFileColumns.WARD]
+    numerical_features = [P_SCORE, G_SCORE, AGE]
 
-    @property
-    def interaction_features(self):
-        self._interaction_features = [self.AGE_WARD, self.AGE_PRECINCT, self.AGE_PARTY]
-        return self._interaction_features
-    
-    @interaction_features.setter
-    def interaction_features(self, value):
-        self._interaction_features.extend(value)
-    
-    @property
-    def category_features(self):
-        self._category_features = [self.PARTY_CAT, self.AGE_RANGE_CAT]
-        return self._category_features
-    
-    @property
-    def high_cardinality_features(self):
-        self._high_cardinality_features = [self.PRECINCT_NAME, self.WARD]
-        return self._high_cardinality_features
-    
-    @property
-    def numerical_features(self):
-        self._numerical_features = [self.P_SCORE, self.G_SCORE, self.AGE]
-        return self._numerical_features
-    
-    @numerical_features.setter
-    def numerical_features(self, value):
-        self._numerical_features.extend(value)
 
 class FindlayModelConfig:
     levy_election_date = datetime.strptime("2025-05-06", "%Y-%m-%d").date()
@@ -77,19 +61,34 @@ class FindlayModelConfig:
         'I': 1.2   # Independents as baseline
     }
 
+class FindlayPredictionGranularTiers:
+    STRONGLY_AGAINST = 'strongly_against'
+    LEAN_AGAINST = 'lean_against'
+    SWING_AGAINST = 'swing_against'
+    LEAN_FOR = 'lean_for'
+    STRONGLY_FOR = 'strongly_for'
+
+
+class FindlayPredictionTotalTiers:
+    TOTAL_FOR_SHARE = 'total_for_share'
+    TOTAL_AGAINST_SHARE = 'total_against_share'
+    TOTAL_SWING_SHARE = 'total_swing_share'
+
+class NovemberResultsColumns:
+    FOR = 'nov_for'
+    AGAINST = 'nov_against'
+    LEVY_TOTAL = 'nov_levy_total'
+    FOR_SHARE = 'nov_for_share'
+    AGAINST_SHARE = 'nov_against_share'
+
 class FindlayVoterFileConfig:
-    MODEL_CONFIG = FindlayModelConfig()
     NOVEMBER_RESULTS_COLS = ['nov_for', 'nov_against', 'nov_levy_total', 'nov_for_share', 'nov_against_share']
-    PREDICTION_LEVEL_COLS = ['lean_against', 'lean_for', 'strongly_against', 'strongly_for',  'swing_against',]
-    PREDICTION_TOTAL_COLS = ['total_for_share', 'total_against_share', 'total_swing_share']
+    PREDICTION_LEVEL_COLS = [FindlayPredictionGranularTiers.__dict__.values()]
+    PREDICTION_TOTAL_COLS = [FindlayPredictionTotalTiers.__dict__.values()]
     PRIMARY_COLUMNS = {}
     GENERAL_COLUMNS = {}
     ELECTION_DATES = {}
     ELECTION_COLUMNS = []
     AGE_RANGE_SORTED = []
     NOVEMBER_ELECTION_NAME = None
-
-    @property
-    def model_config(self) -> FindlayModelConfig:
-        return self.MODEL_CONFIG
     

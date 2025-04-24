@@ -1,13 +1,61 @@
+from enum import StrEnum
 from typing import Protocol
 from datetime import datetime
 import pandas as pd
+import abc
+
+
+# ===== Voter File Protcols =====
+class VoterFileColumns(Protocol):
+    PARTY_AFFILIATION: str
+    AGE: str
+    AGE_RANGE: str
+    PRECINCT_NAME: str
+    WARD: str
+    PRECINCT: str
+    REGISTRATION_DATE: str
+    DATE_OF_BIRTH: str
+    CITY_SCHOOL_DISTRICT: str
+    COUNTY_NUMBER: str
+    COUNTY_NAME: str
+    VOTER_ID: str
+class EarlyVoteColumns(Protocol):
+    VOTER_ID: str
+    DATE_ENTERED: str
+    DATE_RETURNED: str
+    PRECINCT_NAME: str
+    WARD: str
+    VOTE_METHOD: str
+
+class VoterScoringColumns:
+    PRIMARY_SCORE = 'P_SCORE'
+    GENERAL_SCORE = 'G_SCORE'
+
+class VotingMethod(StrEnum):
+    IN_PERSON = 'In-Person'
+    MAIL = 'Mail'
+
+# ===== Model Protocols =====
+
 
 class ModelConfig(Protocol):
-    levy_election_date: datetime.date
     PARTY_WEIGHTS: dict[str, float]
 
-class VoterFileConfig(Protocol):
-    MODEL_CONFIG: ModelConfig
+
+class PredictionGranularTiers(Protocol):
+    STRONGLY_AGAINST: str
+    LEAN_AGAINST: str
+    SWING_AGAINST: str
+    LEAN_FOR: str
+    STRONGLY_FOR: str
+
+
+class PredictionTotalTiers(Protocol):
+    TOTAL_FOR_SHARE: str
+    TOTAL_AGAINST_SHARE: str
+    TOTAL_SWING_SHARE: str
+
+class ModelColumnSetup(Protocol):
     NOVEMBER_RESULTS_COLS: list[str]
     PREDICTION_LEVEL_COLS: list[str]
     PREDICTION_TOTAL_COLS: list[str]
@@ -18,14 +66,52 @@ class VoterFileConfig(Protocol):
     AGE_RANGE_SORTED: list[str]
     NOVEMBER_ELECTION_NAME: str = None
 
-class VoterFileData(Protocol):
+class LinearModelFeatures(abc.ABC):
+    AGE_RANGE_CAT: str
+    PARTY_CAT: str
+    AGE_WARD: str
+    AGE_PRECINCT: str
+    AGE_PARTY: str
+    P_SCORE: str
+    G_SCORE: str
+    AGE: str
+    interaction_features: list[str]
+    category_features: list[str]
+    high_cardinality_features: list[str]
+    numerical_features: list[str]
+    all_features: list[str]
+
+
+class LinearModelFeatureColumns(Protocol):
+    AGE_RANGE_CAT: str
+    PARTY_CAT: str
+    AGE_WARD: str
+    AGE_PRECINCT: str
+    AGE_PARTY: str
+    P_SCORE: str
+    G_SCORE: str
+    AGE: str
+
+class LinearModelFeatureLists(Protocol):
+    category_features: list[str]
+    high_cardinality_features: list[str]
+    numerical_features: list[str]
+    interaction_features: list[str]
+    all_features: list[str]
+
+class DecisionTreeFeatures(Protocol):
+    AGE_RANGE: str
+    PARTY_CAT: str
+    WARD: str
+    PRECINCT_NAME: str
+    AGE: str
+    P_SCORE: str
+    G_SCORE: str
+
+class VoterFileData(abc.ABC):
     data: pd.DataFrame
-    config: VoterFileConfig
+    config: ModelColumnSetup
     model_data: pd.DataFrame
-    weighted_data: pd.DataFrame
-    primary_scores: pd.DataFrame
-    weighted_precinct_category_counts: pd.DataFrame
-    turnout_data: pd.DataFrame
     current_votes: pd.DataFrame
     election_results: pd.DataFrame
 
@@ -40,7 +126,7 @@ class VoterFileData(Protocol):
     
     @election_dates.setter
     def election_dates(self, value: dict[str, datetime.date]):
-        self.config.ELECTION_DATES = value
+        self.config.ELECTION_DATES.update(value)
 
     @property
     def primary_columns(self) -> dict[str, str]:
@@ -48,7 +134,7 @@ class VoterFileData(Protocol):
     
     @primary_columns.setter
     def primary_columns(self, value: dict[str, str]):
-        self.config.PRIMARY_COLUMNS = value
+        self.config.PRIMARY_COLUMNS.update(value)
 
     @property
     def general_columns(self) -> dict[str, str]:
@@ -56,7 +142,7 @@ class VoterFileData(Protocol):
     
     @general_columns.setter
     def general_columns(self, value: dict[str, str]):
-        self.config.GENERAL_COLUMNS = value
+        self.config.GENERAL_COLUMNS.update(value)
     
     @property
     def age_range_sorted(self) -> list[str]:
@@ -77,3 +163,9 @@ class VoterFileData(Protocol):
     @property
     def weighted_precinct_category_counts(self) -> pd.DataFrame:
         return self.config.WEIGHTED_PRECINCT_CATEGORY_COUNTS
+
+
+class ModelDataStartingPoint(Protocol):
+    model_data: pd.DataFrame
+    feature_setup: LinearModelFeatures
+    config: ModelColumnSetup
