@@ -28,6 +28,7 @@ class FindlayVoterFileColumns:
     COUNTY_NAME = 'COUNTY_NAME'
     VOTER_ID = 'SOS_VOTERID'
     VOTED_MAY_LEVY = 'VOTED_MAY_LEVY'
+    VOTED_NOV_LEVY = 'VOTED_NOV_LEVY'
     VOTED_IN_BOTH = 'VOTED_IN_BOTH'
 
 class FindlayEarlyVoteColumns:
@@ -65,6 +66,8 @@ class FindlayPredictionGranularTiers:
     STRONGLY_AGAINST = 'strongly_against'
     LEAN_AGAINST = 'lean_against'
     SWING_AGAINST = 'swing_against'
+    SWING = 'swing'
+    SWING_FOR = 'swing_for'
     LEAN_FOR = 'lean_for'
     STRONGLY_FOR = 'strongly_for'
 
@@ -83,8 +86,20 @@ class NovemberResultsColumns:
 
 class FindlayVoterFileConfig:
     NOVEMBER_RESULTS_COLS = ['nov_for', 'nov_against', 'nov_levy_total', 'nov_for_share', 'nov_against_share']
-    PREDICTION_LEVEL_COLS = [FindlayPredictionGranularTiers.__dict__.values()]
-    PREDICTION_TOTAL_COLS = [FindlayPredictionTotalTiers.__dict__.values()]
+    PREDICTION_LEVEL_COLS = [
+        'strongly_against',
+        'lean_against',
+        'swing_against',
+        'swing',
+        'swing_for',
+        'lean_for',
+        'strongly_for'
+    ]
+    PREDICTION_TOTAL_COLS = [
+        'total_for_share',
+        'total_against_share',
+        'total_swing_share'
+    ]
     PRIMARY_COLUMNS = {}
     GENERAL_COLUMNS = {}
     ELECTION_DATES = {}

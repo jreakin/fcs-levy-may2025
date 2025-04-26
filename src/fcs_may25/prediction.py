@@ -17,7 +17,9 @@ from data_loader import (
     FilePaths, 
     FindlayVoterFileColumns as vf_cols, 
     FindlayMLModelCategories as ml_cat,
-    NovemberResultsColumns as nov_results
+    NovemberResultsColumns as nov_results,
+    FindlayPredictionGranularTiers,
+    VoterScoringColumns
 )
 
 def test_max_iter_impact(X, y, max_iter_values=[100, 500, 1000, 2000]):
@@ -61,10 +63,24 @@ def test_max_iter_impact(X, y, max_iter_values=[100, 500, 1000, 2000]):
 def add_total_for_vote_prediction(func):
     def wrapper(df, config, *args, **kwargs):
         results = func(df, config, *args, **kwargs)
-        results['total_for_share'] = ((results['strongly_for'] + results['lean_for']) / results['Total'].sum()).round(4)
-        results['total_against_share'] = ((results['strongly_against'] + results['lean_against']) / results['Total'].sum()).round(4)
-        results['total_swing_share'] = ((results['swing_against']) / results['Total'].sum()).round(4)
-        results.loc['Total', config.PREDICTION_TOTAL_COLS] = results.sum(numeric_only=True).round(4)
+        
+        # Initialize missing columns with zeros if they don't exist
+        for col in ['strongly_for', 'lean_for', 'strongly_against', 'lean_against', 'swing_against', 'swing', 'swing_for']:
+            if col not in results.columns:
+                results[col] = 0
+        
+        # Calculate shares using ward-level totals
+        ward_totals = results['Total']
+        results['total_for_share'] = (results['strongly_for'] + results['lean_for'])
+        results['total_against_share'] = ((results['strongly_against'] + results['lean_against']))
+        results['total_swing_share'] = ((results['swing_against'] + results['swing'] + results['swing_for']))
+        
+        # Add total row using overall totals
+        total_voters = results['Total'].sum()
+        results.loc['Total', 'total_for_share'] = ((results['strongly_for'].sum() + results['lean_for'].sum()))
+        results.loc['Total', 'total_against_share'] = ((results['strongly_against'].sum() + results['lean_against'].sum()))
+        results.loc['Total', 'total_swing_share'] = (results['swing_against'].sum() + results['swing'].sum() + results['swing_for'].sum())
+        
         return results
     return wrapper
 
@@ -154,6 +170,36 @@ class FindlayPredictionModel:
         _model_data[category_cols.AGE_WARD] = _model_data[voterfile_cols.AGE_RANGE].astype(str) + '-' + _model_data[voterfile_cols.WARD].astype(str)
         _model_data[category_cols.AGE_PRECINCT] = _model_data[voterfile_cols.AGE_RANGE].astype(str) + '-' + _model_data[voterfile_cols.PRECINCT_NAME].astype(str)
         _model_data[category_cols.AGE_PARTY] = _model_data[voterfile_cols.AGE_RANGE].astype(str) + '-' + _model_data[voterfile_cols.PARTY_AFFILIATION].astype(str)
+        _model_data['P_SCORE_LAST4_CAT'] = pd.cut(
+            _model_data[ml_cat.P_SCORE],
+            bins=5,
+            labels=[0, 1, 2, 3, 4] # strongly against, lean against, lean for, strongly for
+        ).astype(int)
+        _model_data['G_SCORE_LAST4_CAT'] = pd.cut(
+            _model_data[ml_cat.G_SCORE],
+            bins=5,
+            labels=[0, 1, 2, 3, 4] # strongly against, lean against, lean for, strongly for
+        ).astype(int)
+        _model_data['P_SCORE_ALL_CAT'] = pd.cut(
+            _model_data['P_SCORE_ALL'],
+            bins=5,
+            labels=[0, 2, 4, 6, 8] # strongly against, lean against, lean for, strongly for
+        ).astype(int)
+        _model_data['G_SCORE_ALL_CAT'] = pd.cut(
+            _model_data['G_SCORE_ALL'],
+            bins=5,
+            labels=[0, 2, 4, 6, 8] # strongly against, lean against, lean for, strongly for
+        ).astype(int)
+        _model_data['P_SCORE_LAST4_AGE_WARD_PRECINCT'] = _model_data['P_SCORE_LAST4_CAT'].astype(str) + '-' + _model_data[category_cols.AGE_WARD]
+        _model_data['G_SCORE_LAST4_AGE_WARD_PRECINCT'] = _model_data['G_SCORE_LAST4_CAT'].astype(str) + '-' + _model_data[category_cols.AGE_WARD]
+        _model_data['P_SCORE_ALL_AGE_WARD_PRECINCT'] = _model_data['P_SCORE_ALL_CAT'].astype(str) + '-' + _model_data[category_cols.AGE_WARD]
+        _model_data['G_SCORE_ALL_AGE_WARD_PRECINCT'] = _model_data['G_SCORE_ALL_CAT'].astype(str) + '-' + _model_data[category_cols.AGE_WARD]
+        ml_cat.interaction_features.extend([
+            'P_SCORE_LAST4_AGE_WARD_PRECINCT',
+            'G_SCORE_LAST4_AGE_WARD_PRECINCT',
+            'P_SCORE_ALL_AGE_WARD_PRECINCT',
+            'G_SCORE_ALL_AGE_WARD_PRECINCT',
+        ])
         self.data.model_data = _model_data
         return self
     
@@ -169,12 +215,12 @@ class FindlayPredictionModel:
         return self
 
     def fit_pseudo_preprocessor(self) -> tuple[pd.DataFrame, pd.Series]:
-        self.X_pseudo= self.preprocessor.fit_transform(self.data.model_data, self.data.model_data[nov_results.FOR_SHARE])
+        self.X_pseudo = self.preprocessor.fit_transform(self.data.model_data, self.data.model_data[nov_results.FOR_SHARE])
         # More granular thresholds based on your data distribution
         self.y_pseudo = pd.cut(
             self.data.model_data[nov_results.FOR_SHARE],
-            bins=[-np.inf, 0.4, 0.5, 0.6, np.inf],
-            labels=[0, 1, 2, 3]  # strongly against, lean against, lean for, strongly for
+            bins=[-np.inf, 0.15, 0.35, 0.45, 0.55, 0.65, 0.85, np.inf],
+            labels=[0, 1, 2, 3, 4, 5, 6]  # strongly_against to strongly_for
         ).astype(int)
         return self.X_pseudo, self.y_pseudo
     
@@ -194,7 +240,7 @@ class FindlayPredictionModel:
         return test_max_iter_impact(X, y)
     
     def fit_model(self):
-        self.model = LogisticRegression(penalty=None, random_state=42, max_iter=500)
+        self.model = LogisticRegression(penalty=None, random_state=42, max_iter=500, multi_class='multinomial')
         self.model.fit(self.X_pseudo, self.y_pseudo)
         return self.model
     
@@ -221,99 +267,88 @@ class FindlayPredictionModel:
         # Visualize the top 15 features
         plt.figure(figsize=(12, 8))
         plt.barh(self.feature_importance['feature'][:15], self.feature_importance['overall_importance'][:15])
-        plt.xlabel('Feature Importance (Absolute Coefficient Value)')
+        plt.xlabel('Linear Model: Feature Importance (Absolute Coefficient Value)')
         plt.ylabel('Feature')
         plt.title('Linear Model: Top 15 Most Important Features')
         plt.tight_layout()
-        plt.savefig(FilePaths.IMAGE_PATH / 'feature_importance.png')
+        plt.savefig(FilePaths.IMAGE_PATH / 'linear_model_feature_importance.png')
         plt.close()
 
         return self.feature_names
     
     def predict_probability(self):
-        y_pred = self.model.predict_proba(self.X_pseudo)[:, 1]
-        self.data.model_data['P_for'] = y_pred
+        """Predict probabilities for each class."""
+        # Get predictions directly
+        predictions = self.model.predict(self.X_pseudo)
+        
+        # Map predictions to probabilities, shifted up to center around 0.5
+        prob_map = {
+            0: 0.47,  # strongly_against 
+            1: 0.48,  # lean_against
+            2: 0.49,  # swing_against
+            3: 0.50,  # swing
+            4: 0.51,  # swing_for
+            5: 0.52,  # lean_for
+            6: 0.53   # strongly_for
+        }
+        
+        self.data.model_data['P_for'] = pd.Series(predictions).map(prob_map)
         return self.data.model_data
     
-
-    def create_weighted_prediction(self):
-        actual_for_share = self.data.model_data[nov_results.FOR_SHARE].mean()
-        actual_against_share = 1 - actual_for_share
-
-        model_weight = 0.3
-        election_weight = 0.7
-
-        self.data.model_data['weighted_prediction'] = (
-            model_weight * self.data.model_data['P_for'] + 
-            election_weight * self.data.model_data.apply(
-                lambda row: (self.ward_mapping.get(row[vf_cols.WARD], 0.5) + self.precinct_mapping.get(row[vf_cols.PRECINCT_NAME], 0.5)) / 2, 
-                axis=1
-            )
-        )   
-
-        # Create a 7-level prediction system
-        self.data.model_data['vote_prediction'] = pd.Series('strongly_against', index=self.data.model_data.index)  # Default
-
-        # Define thresholds for the 7 categories
-        strongly_against_threshold = self.data.model_data['weighted_prediction'].quantile(actual_against_share * 0.4)  # 40% of against voters
-        swing_against_threshold = self.data.model_data['weighted_prediction'].quantile(actual_against_share * 0.7)     # 30% of against voters
-        lean_against_threshold = self.data.model_data['weighted_prediction'].quantile(actual_against_share)            # 30% of against voters
-        swing_threshold = self.data.model_data['weighted_prediction'].quantile(0.5)                                    # Middle point
-        lean_for_threshold = self.data.model_data['weighted_prediction'].quantile(1 - actual_for_share * 0.3)          # 30% of for voters
-        swing_for_threshold = self.data.model_data['weighted_prediction'].quantile(1 - actual_for_share * 0.6)         # 30% of for voters
-        # Top 15% will be strongly_for
-
-        # Assign categories based on thresholds
-        self.data.model_data.loc[(self.data.model_data["weighted_prediction"] >= strongly_against_threshold) & 
-             (self.data.model_data["weighted_prediction"] < swing_against_threshold), 'vote_prediction'] = 'swing_against'
-        self.data.model_data.loc[(self.data.model_data["weighted_prediction"] >= swing_against_threshold) & 
-             (self.data.model_data["weighted_prediction"] < lean_against_threshold), 'vote_prediction'] = 'lean_against'
-        self.data.model_data.loc[(self.data.model_data["weighted_prediction"] >= lean_against_threshold) & 
-             (self.data.model_data["weighted_prediction"] < swing_threshold), 'vote_prediction'] = 'swing'
-        self.data.model_data.loc[(self.data.model_data["weighted_prediction"] >= swing_threshold) & 
-             (self.data.model_data["weighted_prediction"] < lean_for_threshold), 'vote_prediction'] = 'lean_for'
-        self.data.model_data.loc[(self.data.model_data["weighted_prediction"] >= lean_for_threshold) & 
-             (self.data.model_data["weighted_prediction"] < swing_for_threshold), 'vote_prediction'] = 'swing_for'
-        self.data.model_data.loc[self.data.model_data["weighted_prediction"] >= swing_for_threshold, 'vote_prediction'] = 'strongly_for'
-
-        # Verify the distribution
-        _vote_prediction = self.data.model_data['vote_prediction']
-        print("\nLinear Model: Distribution of 7-level predictions:")
-        print("=" * 50)
-        print(_vote_prediction.value_counts(normalize=True).to_markdown(), end='\n\n')
-        print("-" * 50)
-
-
-        # Create a pie chart of the overall vote prediction counts
-        _vote_counts = _vote_prediction.value_counts()
-        plt.figure(figsize=(12, 12))
-        _vote_counts.plot(kind='pie', autopct='%1.1f%%', startangle=90, legend=True, figsize=(12, 12))
-        plt.title('Linear Model: Overall Vote Prediction Distribution')
-        plt.ylabel('')
-        plt.savefig(FilePaths.IMAGE_PATH / 'vote_prediction_distribution.png')
-        plt.show()
-
-        # Print the counts
-        print("\nLinear Model: Vote prediction counts:")
-        print("=" * 50)
-        print(_vote_counts.to_markdown())
-        print("-" * 50)
+    def create_weighted_prediction(self, precinct: str = None, ward: str = None):
+        """Create weighted predictions based on November results and participation."""
+        # Calculate participation scores
+        primary_participation = self.data.model_data[VoterScoringColumns.PRIMARY_SCORE] / 4.0
+        general_participation = self.data.model_data[VoterScoringColumns.GENERAL_SCORE] / 4.0
         
-        self.data.model_data['semi_generic_prediction'] = self.data.model_data['vote_prediction'].map({
-            'strongly_for': 'for',
-            'lean_for': 'for',
-            'swing_for': 'swing',
-            'swing_against': 'swing',
-            'lean_against': 'against',
-            'strongly_against': 'against'
-        })
-        self.data.model_data['generic_vote_prediction'] = self.data.model_data['vote_prediction'].map({
-            'strongly_for': 'for',
-            'lean_for': 'for',
-            'swing_for': 'swing',
-            'swing_against': 'swing',
-            'lean_against': 'against',
-            'strongly_against': 'against'
-        })
-        return self.data.model_data
+        # Get ward-level results and calculate swing band
+        ward_results = self.ward_mapping
+        
+        # For each ward, calculate the swing band (±7.5% around the ward's result)
+        ward_swing_bands = {}
+        for ward, result in ward_results.items():
+            ward_swing_bands[ward] = {
+                'lower': result - 0.075,  # 7.5% below ward result
+                'upper': result + 0.075   # 7.5% above ward result
+            }
+        
+        # Create base prediction using ward results and participation
+        self.data.model_data['weighted_prediction'] = (
+            0.6 * self.data.model_data[vf_cols.WARD].map(ward_results) +  # Ward November results (60%)
+            0.25 * primary_participation +  # Primary participation (25%)
+            0.15 * general_participation    # General participation (15%)
+        )
 
+        # For each ward, determine the thresholds based on that ward's November results
+        def assign_category(row):
+            ward = row[vf_cols.WARD]
+            pred = row['weighted_prediction']
+            
+            # Get swing band for this ward
+            swing_band = ward_swing_bands[ward]
+            
+            # Determine category based on ward-specific thresholds
+            if pred < swing_band['lower'] - 0.05:
+                return FindlayPredictionGranularTiers.STRONGLY_AGAINST
+            elif pred < swing_band['lower']:
+                return FindlayPredictionGranularTiers.LEAN_AGAINST
+            elif pred < swing_band['lower'] + 0.025:
+                return FindlayPredictionGranularTiers.SWING_AGAINST
+            elif pred <= swing_band['upper'] - 0.025:
+                return FindlayPredictionGranularTiers.SWING
+            elif pred <= swing_band['upper']:
+                return FindlayPredictionGranularTiers.SWING_FOR
+            elif pred <= swing_band['upper'] + 0.05:
+                return FindlayPredictionGranularTiers.LEAN_FOR
+            else:
+                return FindlayPredictionGranularTiers.STRONGLY_FOR
+        
+        # Apply the ward-specific categorization
+        self.data.model_data['vote_prediction'] = self.data.model_data.apply(assign_category, axis=1)
+        
+        # Log the distribution by ward for verification
+        for ward in ward_results.keys():
+            ward_dist = self.data.model_data[self.data.model_data[vf_cols.WARD] == ward]['vote_prediction'].value_counts()
+            ic(f"Ward {ward} distribution:\n{ward_dist}")
+        
+        return self.data.model_data

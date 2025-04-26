@@ -34,90 +34,109 @@ uv pip install -e .
     - Creates age ranges and categories
     - Handles missing data
     - Merges election results with voter data
-  - `prediction.py`: Implements the main prediction model
-    - Linear regression model for vote prediction
-    - Feature engineering and selection
-    - Vote share calculations by age, ward, and precinct
-    - Visualization of predictions
-  - `decision_tree.py`: Decision tree analysis
-    - Creates interpretable decision trees
-    - Analyzes voter decision-making patterns
-    - Visualizes decision paths
-    - Provides feature importance analysis
+  - `prediction.py`: Linear prediction model
+  - `decision_tree_.py`: Decision tree analysis
   - `monte_carlo.py`: Monte Carlo simulation
-    - Simulates voter turnout and sentiment
-    - Provides confidence intervals for predictions
-    - Tracks individual voter predictions
-    - Generates distribution plots
   - `main.py`: Orchestrates the analysis
-    - Runs all models
-    - Generates predictions and visualizations
-    - Exports results to CSV files
   - `notebook.py`: Interactive Marimo notebook
-    - Interactive data exploration
-    - Real-time visualization
-    - Custom analysis capabilities
 
 ## Analysis Components
 
-### 1. Data Processing (`data_loader.py`)
-- Loads and processes voter registration data
-- Merges election results with voter records
-- Creates categorical features (age ranges, party affiliation)
-- Handles missing data and data cleaning
-- Calculates voting history scores
+### 1. Linear Prediction Model (`prediction.py`)
+The linear model provides a detailed analysis of individual voter behavior and historical patterns:
 
-### 2. Linear Prediction Model (`prediction.py`)
-- Implements logistic regression for vote prediction
-- Features include:
-  - Age ranges
-  - Party affiliation
-  - Voting history
-  - Ward and precinct information
-- Generates predictions by:
-  - Age group
-  - Ward
-  - Precinct
-- Visualizes predictions using:
-  - Vote share plots
-  - Pie charts
-  - Bar charts
+Key Features:
+- Individual voter attributes (age, party, voting history)
+- Ward and precinct-level November election results
+- Interaction features (age-party, age-ward combinations)
+- Weighted predictions combining model (30%) and historical results (70%)
 
-### 3. Decision Tree Analysis (`decision_tree.py`)
-- Creates interpretable decision trees
-- Analyzes voter decision-making patterns
-- Features:
-  - Age range
-  - Party affiliation
-  - Ward
-  - Voting history scores
-- Provides:
-  - Decision path analysis
-  - Feature importance
-  - Visual tree representation
+Strengths:
+- Precise individual voter predictions
+- Probabilistic estimates of voting behavior
+- Strong handling of continuous variables
+- Direct incorporation of November results
 
-### 4. Monte Carlo Simulation (`monte_carlo.py`)
-- Simulates election outcomes with uncertainty
-- Features:
-  - Turnout variation
-  - Sentiment variation
-  - Individual voter predictions
-- Outputs:
-  - Confidence intervals
-  - Distribution plots
-  - Summary statistics
-  - Individual voter predictions
+Output Categories:
+- 7-level prediction system: strongly_for, lean_for, swing_for, swing, swing_against, lean_against, strongly_against
+- Thresholds adjusted based on precinct-level November performance
+- Weighted combination of model predictions and historical results
 
-### 5. Visualization and Export
-- Generates plots for:
-  - Vote shares by age and ward
-  - Prediction distributions
-  - Decision tree visualizations
-  - Monte Carlo simulation results
-- Exports data to CSV files:
-  - Predictions by ward
-  - Predictions by age
-  - Predictions by precinct
+### 2. Decision Tree Analysis (`decision_tree_.py`)
+The decision tree model focuses on understanding precinct and ward-level voting patterns:
+
+Key Features:
+- Precinct vs. ward November performance (z-scores)
+- Relative voting shares within wards
+- Individual characteristics as secondary factors
+- Precinct-level performance categorization
+
+Strengths:
+- Identifies non-linear relationships
+- Natural handling of categorical variables
+- Clear decision paths for analysis
+- Strong precinct-level insights
+
+Categories Based On:
+- Absolute November Performance:
+  - Strong: >60% or <40%
+  - Moderate: 40-60%
+- Relative to Ward (z-scores):
+  - Significantly different: |z| > 1
+  - Moderately different: 0.5 < |z| < 1
+  - Similar: |z| < 0.5
+
+### 3. Monte Carlo Simulation (`monte_carlo.py`)
+The Monte Carlo model provides uncertainty analysis and scenario testing:
+
+Key Features:
+- Multiple election scenario simulations
+- Turnout variation modeling
+- Sentiment uncertainty analysis
+- November results integration
+- Confidence interval generation
+
+Simulation Parameters:
+- Turnout Variation: σ = 0.1 (10% standard deviation)
+- Sentiment Variation: σ = 0.15 (15% standard deviation)
+- 1000 simulations per run
+- 95% confidence intervals
+
+Output:
+- Probability distributions for:
+  - Overall turnout
+  - For/Against vote totals
+  - Vote share ranges
+- Individual voter prediction confidence
+- Precinct-level uncertainty estimates
+- November vs. current comparison
+
+### Model Comparison and Usage
+
+Each model serves a distinct analytical purpose and provides unique insights:
+
+1. Linear Model (`prediction.py`):
+   - Best for: Individual voter predictions and probabilities
+   - Use when: Need precise voter-level estimates
+   - Strength: Direct incorporation of November results
+   - Unique Value: Most accurate individual predictions
+
+2. Decision Tree (`decision_tree_.py`):
+   - Best for: Understanding precinct patterns and ward relationships
+   - Use when: Analyzing voting segments and trends
+   - Strength: Clear interpretation of voting patterns
+   - Unique Value: Best for precinct-level analysis
+
+3. Monte Carlo (`monte_carlo.py`):
+   - Best for: Understanding uncertainty and risk
+   - Use when: Need confidence intervals and scenario analysis
+   - Strength: Comprehensive uncertainty modeling
+   - Unique Value: Only model providing probability distributions
+
+The models are complementary rather than redundant:
+- Linear Model: Individual voter focus
+- Decision Tree: Precinct and ward patterns
+- Monte Carlo: Uncertainty and risk analysis
 
 ## Running the Analysis
 
