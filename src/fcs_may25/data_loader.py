@@ -6,10 +6,7 @@ from config import (
     FilePaths, 
     FindlayVoterFileColumns, 
     FindlayEarlyVoteColumns, 
-    FindlayPredictionGranularTiers, 
-    FindlayPredictionTotalTiers,
     NovemberResultsColumns,
-    FindlayMLModelCategories
 )
 from pathlib import Path
 from typing import ClassVar, Optional
@@ -143,7 +140,6 @@ class FindlayVoterFile:
     election_results: pd.DataFrame = None
 
     def __init__(self):
-        self.config = FindlayVoterFileConfig()
         self.load_early_votes()
         self.load_data()
         self.transform_election_data()
@@ -190,8 +186,9 @@ class FindlayVoterFile:
         return self.data
     
     def transform_election_data(self):
-        self.data = self.data.fillna(pd.NA)
-        self.data.replace(r'^\s*$', pd.NA, regex=True, inplace=True)
+        self.data = self.data.fillna(np.nan)
+        self.data.replace(r'^\s*$', np.nan, regex=True, inplace=True)
+        self.data = self.data.dropna(how='all', axis=1)
             
         # Use the variables
         _political_party = FindlayVoterFileColumns.PARTY_AFFILIATION
@@ -210,7 +207,7 @@ class FindlayVoterFile:
         ]
         
         # data['CATEGORY'] = data[_age_range].astype(str) + '-' + data[_political_party].astype(str)
-        self.data['WEIGHT'] = self.data[FindlayVoterFileColumns.PARTY_AFFILIATION].map(self.config.model_config.PARTY_WEIGHTS).fillna(1.0)
+        self.data['WEIGHT'] = self.data[FindlayVoterFileColumns.PARTY_AFFILIATION].map(FindlayVoterFileConfig.model_config.PARTY_WEIGHTS).fillna(1.0)
         FindlayVoterFileConfig.ELECTION_DATES = {
                 x: datetime.strptime(x.split("-")[1], "%m/%d/%Y").date()
                     for x in self.data.columns if "GENERAL" in x or "PRIMARY" in x
@@ -228,7 +225,7 @@ class FindlayVoterFile:
         self.data['P_SCORE_ALL'] = self.data[_all_primaries].sum(axis=1)
         self.data[VoterScoringColumns.GENERAL_SCORE] = self.data[_last4_generals].sum(axis=1)
         self.data['G_SCORE_ALL'] = self.data[_all_generals].sum(axis=1)
-        self.data[FindlayVoterFileColumns.VOTED_MAY_LEVY] = self.data[FindlayVoterFileColumns.VOTER_ID].isin(self.current_votes[FindlayEarlyVoteColumns.VOTER_ID]).astype(int)
+        self.data[FindlayVoterFileColumns.VOTED_MAY_LEVY] = self.data[FindlayVoterFileColumns.VOTER_ID].isin(self.current_votes[FindlayEarlyVoteColumns.VOTER_ID])
         self.data[FindlayVoterFileColumns.VOTED_NOV_LEVY] = self.data[list(FindlayVoterFileConfig.GENERAL_COLUMNS.keys())[-1]]
         self.data[FindlayVoterFileColumns.VOTED_IN_BOTH] = self.data[FindlayVoterFileColumns.VOTED_MAY_LEVY] & self.data[FindlayVoterFileColumns.VOTED_NOV_LEVY]
         return self.data
@@ -239,17 +236,42 @@ class FindlayVoterFile:
         election_results[NovemberResultsColumns.AGAINST] = pd.to_numeric(election_results['against'], errors='coerce').fillna(0)
         election_results[NovemberResultsColumns.LEVY_TOTAL] = pd.to_numeric(election_results['total'], errors='coerce').fillna(0)
         election_results[FindlayEarlyVoteColumns.WARD] = election_results[FindlayEarlyVoteColumns.PRECINCT_NAME].str[:-1]
-        _election_cols = list(election_results.columns)
-        election_results = election_results[[_election_cols.pop(_election_cols.index(FindlayEarlyVoteColumns.WARD))] + _election_cols]
-        election_results[NovemberResultsColumns.FOR_SHARE] = (election_results[NovemberResultsColumns.FOR] / election_results["total"]).round(4)
-        election_results[NovemberResultsColumns.AGAINST_SHARE] = (election_results[NovemberResultsColumns.AGAINST] / election_results["total"]).round(4)
-        election_results = election_results.rename(
-            columns={
-                "for": NovemberResultsColumns.FOR,
-                "against": NovemberResultsColumns.AGAINST,
-                "total": NovemberResultsColumns.LEVY_TOTAL
+        ward_results = election_results.groupby(FindlayEarlyVoteColumns.WARD).agg(
+            {
+                NovemberResultsColumns.FOR: 'sum',
+                NovemberResultsColumns.AGAINST: 'sum',
+                NovemberResultsColumns.LEVY_TOTAL: 'sum'
             }
-        )
+        ).rename(columns={
+            NovemberResultsColumns.FOR: 'nov_ward_for_count',
+            NovemberResultsColumns.AGAINST: 'nov_ward_against_count',
+            NovemberResultsColumns.LEVY_TOTAL: 'nov_ward_total_count'
+        })
+        precinct_results = election_results.groupby(FindlayEarlyVoteColumns.PRECINCT_NAME).agg(
+            {
+                NovemberResultsColumns.FOR: 'sum',
+                NovemberResultsColumns.AGAINST: 'sum',
+                NovemberResultsColumns.LEVY_TOTAL: 'sum'
+            }
+        ).rename(columns={
+            NovemberResultsColumns.FOR: 'nov_precinct_for_count',
+            NovemberResultsColumns.AGAINST: 'nov_precinct_against_count',
+            NovemberResultsColumns.LEVY_TOTAL: 'nov_precinct_total_count'
+        })
+        
+        election_results = election_results.merge(ward_results, left_on=FindlayEarlyVoteColumns.WARD, right_on=FindlayEarlyVoteColumns.WARD, how='left')
+        election_results = election_results.merge(precinct_results, left_on=FindlayEarlyVoteColumns.PRECINCT_NAME, right_on=FindlayEarlyVoteColumns.PRECINCT_NAME, how='left')
+        election_results['nov_for_share'] = (election_results[NovemberResultsColumns.FOR] / election_results[NovemberResultsColumns.LEVY_TOTAL]).round(4)
+        election_results['nov_against_share'] = (election_results[NovemberResultsColumns.AGAINST] / election_results[NovemberResultsColumns.LEVY_TOTAL]).round(4)
+        
+        # Calculate for and against shares at ward level
+        election_results['nov_ward_for_share'] = (election_results['nov_ward_for_count'] / election_results['nov_ward_total_count']).round(4)
+        election_results['nov_ward_against_share'] = (election_results['nov_ward_against_count'] / election_results['nov_ward_total_count']).round(4)
+        
+        # Calculate for and against shares at precinct level
+        election_results['nov_precinct_for_share'] = (election_results['nov_precinct_for_count'] / election_results['nov_precinct_total_count']).round(4)
+        election_results['nov_precinct_against_share'] = (election_results['nov_precinct_against_count'] / election_results['nov_precinct_total_count']).round(4)
+        
         self.election_results = election_results
     
     def create_model_dataset(self):

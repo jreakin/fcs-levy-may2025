@@ -6,26 +6,6 @@ import abc
 
 
 # ===== Voter File Protcols =====
-class VoterFileColumns(Protocol):
-    PARTY_AFFILIATION: str
-    AGE: str
-    AGE_RANGE: str
-    PRECINCT_NAME: str
-    WARD: str
-    PRECINCT: str
-    REGISTRATION_DATE: str
-    DATE_OF_BIRTH: str
-    CITY_SCHOOL_DISTRICT: str
-    COUNTY_NUMBER: str
-    COUNTY_NAME: str
-    VOTER_ID: str
-class EarlyVoteColumns(Protocol):
-    VOTER_ID: str
-    DATE_ENTERED: str
-    DATE_RETURNED: str
-    PRECINCT_NAME: str
-    WARD: str
-    VOTE_METHOD: str
 
 class VoterScoringColumns:
     PRIMARY_SCORE = 'P_SCORE'
@@ -66,31 +46,6 @@ class ModelColumnSetup(Protocol):
     AGE_RANGE_SORTED: list[str]
     NOVEMBER_ELECTION_NAME: str = None
 
-class LinearModelFeatures(abc.ABC):
-    AGE_RANGE_CAT: str
-    PARTY_CAT: str
-    AGE_WARD: str
-    AGE_PRECINCT: str
-    AGE_PARTY: str
-    P_SCORE: str
-    G_SCORE: str
-    AGE: str
-    interaction_features: list[str]
-    category_features: list[str]
-    high_cardinality_features: list[str]
-    numerical_features: list[str]
-    all_features: list[str]
-
-
-class LinearModelFeatureColumns(Protocol):
-    AGE_RANGE_CAT: str
-    PARTY_CAT: str
-    AGE_WARD: str
-    AGE_PRECINCT: str
-    AGE_PARTY: str
-    P_SCORE: str
-    G_SCORE: str
-    AGE: str
 
 class LinearModelFeatureLists(Protocol):
     category_features: list[str]
@@ -98,15 +53,6 @@ class LinearModelFeatureLists(Protocol):
     numerical_features: list[str]
     interaction_features: list[str]
     all_features: list[str]
-
-class DecisionTreeFeatures(Protocol):
-    AGE_RANGE: str
-    PARTY_CAT: str
-    WARD: str
-    PRECINCT_NAME: str
-    AGE: str
-    P_SCORE: str
-    G_SCORE: str
 
 class VoterFileData(abc.ABC):
     data: pd.DataFrame
@@ -167,5 +113,4 @@ class VoterFileData(abc.ABC):
 
 class ModelDataStartingPoint(Protocol):
     model_data: pd.DataFrame
-    feature_setup: LinearModelFeatures
     config: ModelColumnSetup

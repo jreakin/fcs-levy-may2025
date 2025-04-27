@@ -39,19 +39,6 @@ class FindlayEarlyVoteColumns:
     WARD = 'ward'
     VOTE_METHOD = 'Vote Method'
 
-class FindlayMLModelCategories:
-    AGE_RANGE_CAT = 'AGE_RANGE_CAT'
-    PARTY_CAT = 'PARTY_CAT'
-    AGE_WARD = 'AGE_WARD'
-    AGE_PRECINCT = 'AGE_PRECINCT'
-    AGE_PARTY = 'AGE_PARTY'
-    P_SCORE = 'P_SCORE'
-    G_SCORE = 'G_SCORE'
-    AGE = 'AGE'
-    interaction_features = [AGE_WARD, AGE_PRECINCT, AGE_PARTY]
-    category_features = [PARTY_CAT, AGE_RANGE_CAT]
-    high_cardinality_features = [FindlayVoterFileColumns.PRECINCT_NAME, FindlayVoterFileColumns.WARD]
-    numerical_features = [P_SCORE, G_SCORE, AGE]
 
 
 class FindlayModelConfig:
@@ -103,7 +90,13 @@ class FindlayVoterFileConfig:
     PRIMARY_COLUMNS = {}
     GENERAL_COLUMNS = {}
     ELECTION_DATES = {}
-    ELECTION_COLUMNS = []
+    ELECTION_COLUMNS = []   
     AGE_RANGE_SORTED = []
     NOVEMBER_ELECTION_NAME = None
-    
+
+class FindlayLinearModelFeatureLists:
+    category_features = []
+    high_cardinality_features = []
+    numerical_features = []
+    interaction_features = []
+    all_features = []
