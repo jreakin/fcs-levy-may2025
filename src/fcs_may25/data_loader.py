@@ -14,7 +14,7 @@ import warnings
 from contextlib import ExitStack
 
 import polars as pl
-from datetime import datetime
+from datetime import datetime, date
 import numpy as np
 import pandas as pd
 from icecream import ic
@@ -138,12 +138,14 @@ class FindlayVoterFile:
     model_data: pd.DataFrame
     current_votes: pd.DataFrame = None
     election_results: pd.DataFrame = None
-
+    precinct_turnout_stats: pd.DataFrame = None
+    election_turnout_stats: pd.DataFrame = None
     def __init__(self):
         self.load_early_votes()
         self.load_data()
         self.transform_election_data()
         self.load_election_results()
+        self.create_election_turnout_stats()
         self.create_model_dataset()
 
     
@@ -230,6 +232,44 @@ class FindlayVoterFile:
         self.data[FindlayVoterFileColumns.VOTED_IN_BOTH] = self.data[FindlayVoterFileColumns.VOTED_MAY_LEVY] & self.data[FindlayVoterFileColumns.VOTED_NOV_LEVY]
         return self.data
     
+    def create_election_turnout_stats(self):
+        _turnout_stats = []
+        for e in [FindlayVoterFileConfig.PRIMARY_COLUMNS.keys(), FindlayVoterFileConfig.GENERAL_COLUMNS.keys()]:
+            for election in e:
+                _election_details = election.split('-')
+                _election_type = _election_details[0].lower()
+                _election_date = datetime.strptime(_election_details[1], "%m/%d/%Y").date()
+                if _election_date > date(2014, 11, 7):
+                    _eligible_voters = self.data[self.data['REGISTRATION_DATE'].dt.date <= _election_date]
+
+                    for precinct in _eligible_voters[FindlayVoterFileColumns.PRECINCT_NAME].unique():
+                        _precinct_groupby = _eligible_voters[
+                            _eligible_voters[FindlayVoterFileColumns.PRECINCT_NAME] == precinct
+                        ].groupby(
+                            [
+                                FindlayVoterFileColumns.WARD,
+                                FindlayVoterFileColumns.PRECINCT_NAME, 
+                                FindlayVoterFileColumns.AGE_RANGE
+                            ]
+                        ).agg(
+                            {
+                                election: 'sum',
+                                FindlayVoterFileColumns.VOTER_ID: 'count'
+                            }
+                        ).rename(
+                            columns={
+                                election: 'voted_count',
+                                FindlayVoterFileColumns.VOTER_ID: 'registered_voters'
+                            }
+                        )
+                        _precinct_groupby['turnout'] = (_precinct_groupby['voted_count'] / _precinct_groupby['registered_voters']).round(4).fillna(0)
+                        _precinct_groupby['year'] = _election_date.year
+                        _precinct_groupby['election_type'] = _election_type
+                        _precinct_groupby['election_date'] = _election_date
+                        _precinct_groupby = _precinct_groupby.reset_index()
+                        _turnout_stats.append(_precinct_groupby)
+        self.precinct_turnout_stats = pd.concat(_turnout_stats)
+    
     def load_election_results(self):
         election_results = pd.read_csv(FilePaths.RESULTS).dropna(how='all', axis=1)
         election_results[NovemberResultsColumns.FOR] = pd.to_numeric(election_results['for'], errors='coerce').fillna(0)
@@ -273,6 +313,92 @@ class FindlayVoterFile:
         election_results['nov_precinct_against_share'] = (election_results['nov_precinct_against_count'] / election_results['nov_precinct_total_count']).round(4)
         
         self.election_results = election_results
-    
+
+        for precinct in self.election_results['precinct'].unique():
+            _precinct_registered_voters = self.data[self.data['PRECINCT_NAME'] == precinct]['SOS_VOTERID'].count()
+            _precinct_voted_voters = (self.election_results[self.election_results['precinct'] == precinct]['nov_precinct_total_count'].sum())
+            _precinct_turnout = (_precinct_voted_voters / _precinct_registered_voters).round(4)
+            self.election_results.loc[self.election_results['precinct'] == precinct, 'nov_precinct_turnout'] = _precinct_turnout
+
+        for ward in self.election_results['ward'].unique():
+            _ward_registered_voters = self.data[self.data['WARD'] == ward]['SOS_VOTERID'].count()
+            _ward_voted_voters = (self.election_results[self.election_results['ward'] == ward]['nov_ward_total_count']).unique()[0]
+            _ward_turnout = (_ward_voted_voters / _ward_registered_voters).round(4)
+            self.election_results.loc[self.election_results['ward'] == ward, 'nov_ward_turnout'] = _ward_turnout
+
     def create_model_dataset(self):
         self.model_data = self.data.merge(self.election_results, left_on=FindlayVoterFileColumns.PRECINCT_NAME, right_on=FindlayEarlyVoteColumns.PRECINCT_NAME)
+        _primary_turnout_stats_precinct = self.precinct_turnout_stats[self.precinct_turnout_stats['election_type'] == 'primary'].groupby(
+            [
+                FindlayVoterFileColumns.PRECINCT_NAME, 
+                FindlayVoterFileColumns.AGE_RANGE
+            ]
+        ).agg(
+            {
+                'turnout': 'mean'
+            }
+        ).reset_index().rename(columns={'turnout': 'primary_precinct_turnout_mean'})
+        _general_turnout_stats_precinct = self.precinct_turnout_stats[self.precinct_turnout_stats['election_type'] == 'general'].groupby(
+            [
+                FindlayVoterFileColumns.PRECINCT_NAME, 
+                FindlayVoterFileColumns.AGE_RANGE
+            ]
+        ).agg(
+            {
+                'turnout': 'mean'
+            }
+        ).reset_index().rename(columns={'turnout': 'general_precinct_turnout_mean'})
+        _primary_turnout_stats_ward = self.precinct_turnout_stats[self.precinct_turnout_stats['election_type'] == 'primary'].groupby(
+            [
+                FindlayVoterFileColumns.WARD, 
+                FindlayVoterFileColumns.AGE_RANGE
+            ]
+        ).agg(
+            {
+                'turnout': 'mean'
+            }
+        ).reset_index().rename(columns={'turnout': 'primary_ward_turnout_mean'})
+        _general_turnout_stats_ward = self.precinct_turnout_stats[self.precinct_turnout_stats['election_type'] == 'general'].groupby(
+            [
+                FindlayVoterFileColumns.WARD, 
+                FindlayVoterFileColumns.AGE_RANGE
+            ]
+        ).agg(
+            {
+                'turnout': 'mean'
+            }
+        ).reset_index().rename(columns={'turnout': 'general_ward_turnout_mean'})
+
+        _primary_turnout_stats_precinct['primary_precinct_turnout_mean'] = _primary_turnout_stats_precinct['primary_precinct_turnout_mean'].round(4)
+        _general_turnout_stats_precinct['general_precinct_turnout_mean'] = _general_turnout_stats_precinct['general_precinct_turnout_mean'].round(4)
+        _primary_turnout_stats_ward['primary_ward_turnout_mean'] = _primary_turnout_stats_ward['primary_ward_turnout_mean'].round(4)
+        _general_turnout_stats_ward['general_ward_turnout_mean'] = _general_turnout_stats_ward['general_ward_turnout_mean'].round(4)
+        
+        # Merge precinct stats first
+        self.model_data = self.model_data.merge(
+            _primary_turnout_stats_precinct, 
+            left_on=[FindlayVoterFileColumns.PRECINCT_NAME, FindlayVoterFileColumns.AGE_RANGE], 
+            right_on=[FindlayVoterFileColumns.PRECINCT_NAME, FindlayVoterFileColumns.AGE_RANGE], 
+            how='left'
+        )
+        self.model_data = self.model_data.merge(
+            _general_turnout_stats_precinct, 
+            left_on=[FindlayVoterFileColumns.PRECINCT_NAME, FindlayVoterFileColumns.AGE_RANGE], 
+            right_on=[FindlayVoterFileColumns.PRECINCT_NAME, FindlayVoterFileColumns.AGE_RANGE], 
+            how='left'
+        )
+        
+        # Then merge ward stats
+        self.model_data = self.model_data.merge(
+            _primary_turnout_stats_ward, 
+            left_on=[FindlayVoterFileColumns.WARD, FindlayVoterFileColumns.AGE_RANGE], 
+            right_on=[FindlayVoterFileColumns.WARD, FindlayVoterFileColumns.AGE_RANGE], 
+            how='left'
+        )
+        self.model_data = self.model_data.merge(
+            _general_turnout_stats_ward, 
+            left_on=[FindlayVoterFileColumns.WARD, FindlayVoterFileColumns.AGE_RANGE], 
+            right_on=[FindlayVoterFileColumns.WARD, FindlayVoterFileColumns.AGE_RANGE], 
+            how='left'
+        )
+
