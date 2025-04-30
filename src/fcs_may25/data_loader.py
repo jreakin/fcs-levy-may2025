@@ -7,6 +7,7 @@ from config import (
     FindlayVoterFileColumns, 
     FindlayEarlyVoteColumns, 
     NovemberResultsColumns,
+    FindlayLinearModelFeatureLists
 )
 from pathlib import Path
 from typing import ClassVar, Optional
@@ -19,8 +20,86 @@ import numpy as np
 import pandas as pd
 from icecream import ic
 import functools
+import duckdb
 
 warnings.filterwarnings('ignore')
+
+def calculate_turnout(data: pd.DataFrame, elections: list[str], by_column: str, district_level: str):
+
+    turnout_list = []
+    election_type = elections[0].split('-')[0].lower()
+    ic(f"Calculating {election_type} turnout for {by_column} in {district_level}")
+    _district_level_name = district_level if district_level != 'PRECINCT_NAME' else 'precinct'
+    _by_column_name = by_column if by_column != 'PARTY_AFFILIATION' else 'party'
+    _district_level_and_column_name = f'{_district_level_name}_{_by_column_name}'.lower()
+    for election in elections:
+        # Get both raw counts and percentages
+        raw_counts = pd.crosstab(
+            [data[by_column], data[district_level]], 
+            data[election]
+        )
+        
+        normalized = pd.crosstab(
+            [data[by_column], data[district_level]], 
+            data[election],
+            normalize='index'
+        )
+
+        if True in raw_counts.columns:
+            counts = raw_counts[True]
+            rates = normalized[True]
+        elif 1 in raw_counts.columns:
+            counts = raw_counts[1]
+            rates = normalized[1]
+        
+        # Reset index to convert to table format
+        counts = counts.reset_index()
+        rates = rates.reset_index()
+        
+        # Rename columns for clarity
+        counts.columns = [by_column, district_level, f'{election}_count']
+        rates.columns = [by_column, district_level, f'{election}_rate']
+        
+        # Merge counts and rates
+        turnout = counts.merge(rates, on=[by_column, district_level])
+        turnout_list.append(turnout)
+
+    # Merge all turnouts into one table
+    turnout_table = turnout_list[0]
+    for df in turnout_list[1:]:
+        turnout_table = turnout_table.merge(
+            df[[by_column, district_level] + [col for col in df.columns if col not in [by_column, district_level]]], 
+            on=[by_column, district_level]
+        )
+
+        # Add average turnout across all elections
+        rate_cols = [col for col in turnout_table.columns if col.endswith('_rate')]
+        count_cols = [col for col in turnout_table.columns if col.endswith('_count')]
+        
+        # Calculate averages
+        turnout_table[_rate_col_name := f'{election_type}_avg_{_district_level_and_column_name}_rate'.lower()] = turnout_table[rate_cols].mean(axis=1)
+        turnout_table[_count_col_name := f'{election_type}_avg_{_district_level_and_column_name}_count'.lower()] = turnout_table[count_cols].mean(axis=1)
+        
+        # Calculate relative participation (how much this group participates compared to average)
+        avg_participation = turnout_table[_rate_mean_col_name := f'{election_type}_avg_{_district_level_and_column_name}_rate'.lower()].mean()
+        turnout_table[_participation_col_name := f'{election_type}_{_district_level_and_column_name}_relative_participation'.lower()] = (
+            turnout_table[_rate_col_name] / avg_participation
+        )
+        turnout_table = turnout_table[[
+            by_column, 
+            district_level,
+            _rate_col_name, 
+            _count_col_name, 
+            _participation_col_name
+        ]].rename(columns={
+            _rate_col_name : (_new_rate_col_name := f'{election_type}_avg_{_district_level_and_column_name}_by_{_by_column_name}_rate'.lower()),
+            _count_col_name : (_new_count_col_name := f'{election_type}_avg_{_district_level_and_column_name}_by_{_by_column_name}_count'.lower()),
+            _participation_col_name : (_new_participation_col_name := f'{election_type}_{_district_level_and_column_name}_by_{_by_column_name}_relative_participation'.lower())
+        })
+        _current_features = [_new_rate_col_name, _new_count_col_name, _new_participation_col_name]
+        FindlayLinearModelFeatureLists.numerical_features.extend(_current_features)
+        return turnout_table
+    
 
 
 class DataWrapper:
@@ -147,7 +226,7 @@ class FindlayVoterFile:
         self.load_election_results()
         self.create_election_turnout_stats()
         self.create_model_dataset()
-
+        self.calculate_statistics()
     
     @DataWrapper.format_date(FindlayEarlyVoteColumns.DATE_ENTERED, FindlayEarlyVoteColumns.DATE_RETURNED)
     def load_early_votes(self):
@@ -402,3 +481,25 @@ class FindlayVoterFile:
             how='left'
         )
 
+    def calculate_statistics(self):
+        primary_elections = list(FindlayVoterFileConfig.PRIMARY_COLUMNS.keys())
+        general_elections = list(FindlayVoterFileConfig.GENERAL_COLUMNS.keys())
+        self.model_data[primary_elections] = self.model_data[primary_elections].astype(bool)
+        self.model_data[general_elections] = self.model_data[general_elections].astype(bool)
+        # self.model_data['primary_score'] = self.model_data[primary_elections].sum(axis=1)
+        # self.model_data['general_score'] = self.model_data[general_elections].sum(axis=1)
+        # self.model_data['total_score'] = self.model_data['primary_score'] + self.model_data['general_score']
+        # self.model_data['total_score_share'] = self.model_data['total_score'] / (len(primary_elections) + len(general_elections))
+        
+
+        self.model_data = self.model_data.merge(calculate_turnout(self.model_data, primary_elections, by_column='AGE_RANGE', district_level='WARD'), on=['AGE_RANGE', 'WARD'], how='left')
+        self.model_data = self.model_data.merge(calculate_turnout(self.model_data, general_elections, by_column='AGE_RANGE', district_level='WARD'), on=['AGE_RANGE', 'WARD'], how='left')
+
+        self.model_data = self.model_data.merge(calculate_turnout(self.model_data, primary_elections, by_column='AGE_RANGE', district_level='PRECINCT_NAME'), on=['AGE_RANGE', 'PRECINCT_NAME'], how='left')
+        self.model_data = self.model_data.merge(calculate_turnout(self.model_data, general_elections, by_column='AGE_RANGE', district_level='PRECINCT_NAME'), on=['AGE_RANGE', 'PRECINCT_NAME'], how='left')
+
+        self.model_data = self.model_data.merge(calculate_turnout(self.model_data, primary_elections, by_column='PARTY_AFFILIATION', district_level='WARD'), on=['PARTY_AFFILIATION', 'WARD'], how='left')
+        self.model_data = self.model_data.merge(calculate_turnout(self.model_data, general_elections, by_column='PARTY_AFFILIATION', district_level='WARD'), on=['PARTY_AFFILIATION', 'WARD'], how='left')
+
+        self.model_data = self.model_data.merge(calculate_turnout(self.model_data, primary_elections, by_column='PARTY_AFFILIATION', district_level='PRECINCT_NAME'), on=['PARTY_AFFILIATION', 'PRECINCT_NAME'], how='left')
+        self.model_data = self.model_data.merge(calculate_turnout(self.model_data, general_elections, by_column='PARTY_AFFILIATION', district_level='PRECINCT_NAME'), on=['PARTY_AFFILIATION', 'PRECINCT_NAME'], how='left')

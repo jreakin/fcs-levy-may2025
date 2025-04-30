@@ -237,6 +237,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "category-encoders" },
+    { name = "duckdb" },
     { name = "icecream" },
     { name = "ipynb" },
     { name = "marimo", extra = ["recommended"] },
@@ -257,6 +258,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "category-encoders", specifier = ">=2.8.1" },
+    { name = "duckdb", specifier = ">=1.2.2" },
     { name = "icecream", specifier = ">=2.1.4" },
     { name = "ipynb", specifier = ">=0.5.1" },
     { name = "marimo", extras = ["recommended"], specifier = ">=0.12.8" },
