@@ -1,473 +1,505 @@
+from __future__ import annotations
+from dataclasses import dataclass
+from protocols import ModelColumnSetup, ModelConfig, VotingMethod, VoterScoringColumns
+from config import (
+    FindlayModelConfig, 
+    FilePaths, 
+    FindlayVoterFileColumns, 
+    FindlayEarlyVoteColumns, 
+    NovemberResultsColumns,
+    FindlayLinearModelFeatureLists
+)
 from pathlib import Path
-from typing import Union
+from typing import ClassVar, Optional
 import warnings
+from contextlib import ExitStack
 
 import polars as pl
-from datetime import datetime
+from datetime import datetime, date
 import numpy as np
 import pandas as pd
 from icecream import ic
-from scipy.optimize import lsq_linear
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import classification_report, accuracy_score
-from sklearn.model_selection import train_test_split
-import statsmodels.api as sm
+import functools
+import duckdb
 
 warnings.filterwarnings('ignore')
 
+def calculate_turnout(data: pd.DataFrame, elections: list[str], by_column: str, district_level: str):
 
-# Setup
-DOWNLOAD_PATH = Path.home() / 'Downloads'
-VOTERFILE_PATH = Path.home() / 'PyCharmProjects' / 'state-voterfiles'
-DATA_PATH = Path(__file__).parent / 'data'
-PREDICTION_FOLDER = DATA_PATH / 'may25_predictions'
-IMAGE_PATH = DATA_PATH / 'images'
+    turnout_list = []
+    election_type = elections[0].split('-')[0].lower()
+    ic(f"Calculating {election_type} turnout for {by_column} in {district_level}")
+    _district_level_name = district_level if district_level != 'PRECINCT_NAME' else 'precinct'
+    _by_column_name = by_column if by_column != 'PARTY_AFFILIATION' else 'party'
+    _district_level_and_column_name = f'{_district_level_name}_{_by_column_name}'.lower()
+    for election in elections:
+        # Get both raw counts and percentages
+        raw_counts = pd.crosstab(
+            [data[by_column], data[district_level]], 
+            data[election]
+        )
+        
+        normalized = pd.crosstab(
+            [data[by_column], data[district_level]], 
+            data[election],
+            normalize='index'
+        )
 
-RESULTS = DATA_PATH / 'NOV24-FCS-TAX.csv'
-EARLY_VOTE = DATA_PATH / 'may26_ev'
-DATA = VOTERFILE_PATH / "data/ohio/voterfile/ohio-statewide"
+        if True in raw_counts.columns:
+            counts = raw_counts[True]
+            rates = normalized[True]
+        elif 1 in raw_counts.columns:
+            counts = raw_counts[1]
+            rates = normalized[1]
+        
+        # Reset index to convert to table format
+        counts = counts.reset_index()
+        rates = rates.reset_index()
+        
+        # Rename columns for clarity
+        counts.columns = [by_column, district_level, f'{election}_count']
+        rates.columns = [by_column, district_level, f'{election}_rate']
+        
+        # Merge counts and rates
+        turnout = counts.merge(rates, on=[by_column, district_level])
+        turnout_list.append(turnout)
 
-DataFrameType = Union[pl.LazyFrame, pd.DataFrame]
+    # Merge all turnouts into one table
+    turnout_table = turnout_list[0]
+    for df in turnout_list[1:]:
+        turnout_table = turnout_table.merge(
+            df[[by_column, district_level] + [col for col in df.columns if col not in [by_column, district_level]]], 
+            on=[by_column, district_level]
+        )
 
+        # Add average turnout across all elections
+        rate_cols = [col for col in turnout_table.columns if col.endswith('_rate')]
+        count_cols = [col for col in turnout_table.columns if col.endswith('_count')]
+        
+        # Calculate averages
+        turnout_table[_rate_col_name := f'{election_type}_avg_{_district_level_and_column_name}_rate'.lower()] = turnout_table[rate_cols].mean(axis=1)
+        turnout_table[_count_col_name := f'{election_type}_avg_{_district_level_and_column_name}_count'.lower()] = turnout_table[count_cols].mean(axis=1)
+        
+        # Calculate relative participation (how much this group participates compared to average)
+        avg_participation = turnout_table[_rate_mean_col_name := f'{election_type}_avg_{_district_level_and_column_name}_rate'.lower()].mean()
+        turnout_table[_participation_col_name := f'{election_type}_{_district_level_and_column_name}_relative_participation'.lower()] = (
+            turnout_table[_rate_col_name] / avg_participation
+        )
+        turnout_table = turnout_table[[
+            by_column, 
+            district_level,
+            _rate_col_name, 
+            _count_col_name, 
+            _participation_col_name
+        ]].rename(columns={
+            _rate_col_name : (_new_rate_col_name := f'{election_type}_avg_{_district_level_and_column_name}_by_{_by_column_name}_rate'.lower()),
+            _count_col_name : (_new_count_col_name := f'{election_type}_avg_{_district_level_and_column_name}_by_{_by_column_name}_count'.lower()),
+            _participation_col_name : (_new_participation_col_name := f'{election_type}_{_district_level_and_column_name}_by_{_by_column_name}_relative_participation'.lower())
+        })
+        _current_features = [_new_rate_col_name, _new_count_col_name, _new_participation_col_name]
+        FindlayLinearModelFeatureLists.numerical_features.extend(_current_features)
+        return turnout_table
+    
+
+
+class DataWrapper:
+
+    @staticmethod
+    def format_date(*date_columns, fmt: Optional[str] = None):
+        def decorator(func):
+            @functools.wraps(func)
+            def wrapper(self, *args, **kwargs):
+                df = func(self, *args, **kwargs)
+                ic("format_date", date_columns)
+                for col in date_columns:
+                    if isinstance(df, pl.DataFrame) or isinstance(df, pl.LazyFrame):
+                        # For Polars, we'll add the column transformation directly
+                        df = df.with_columns(
+                            pl.col(col).str.strptime(pl.Datetime, format=fmt)
+                        )
+                    else:
+                        # For Pandas
+                        if col in df.columns:
+                            df[col] = pd.to_datetime(df[col], format=fmt)
+                return df
+            return wrapper
+        return decorator
+    
+    @staticmethod
+    def create_age_column(date_of_birth_col: str, age_col_name: str):
+        def decorator(func):
+            @functools.wraps(func)
+            def wrapper(self, *args, **kwargs):
+                df = func(self, *args, **kwargs)
+                if isinstance(df, pl.DataFrame) or isinstance(df, pl.LazyFrame):
+                    df = df.with_columns(
+                        # Calculate age in years
+                        (
+                        (pl.lit(datetime.now()) - pl.col(date_of_birth_col))
+                            .dt.total_days()
+                            // 365  # Integer division to get approximate years
+                        )
+                        .cast(pl.Int64)
+                        .alias(age_col_name)
+                    )
+                else:
+                    df[age_col_name] = (datetime.now() - df[date_of_birth_col]).dt.days // 365
+                return df
+            return wrapper
+        return decorator
+    
+
+    @staticmethod
+    def create_age_range(age_col: str, age_range_col: str):
+        def decorator(func):
+            @functools.wraps(func)
+            def wrapper(self, *args, **kwargs):
+                df = func(self, *args, **kwargs)
+                if isinstance(df, pl.DataFrame) or isinstance(df, pl.LazyFrame):
+                    df = df.with_columns(
+                        pl.col(age_col).cast(pl.Int64).alias(age_col)
+                    )
+                    # Bin the age to age_range
+                    df = df.with_columns(
+                        pl.when(pl.col(age_col) < 18)
+                            .then(pl.lit('18-24'))
+                            .when(pl.col(age_col) >= 18)
+                            .then(pl.lit('25-34'))
+                            .when(pl.col(age_col) >= 34)
+                            .then(pl.lit('35-44'))
+                            .when(pl.col(age_col) >= 44)
+                            .then(pl.lit('45-54'))
+                            .when(pl.col(age_col) >= 54)
+                            .then(pl.lit('55-64'))
+                            .when(pl.col(age_col) >= 64)
+                            .then(pl.lit('65-74'))
+                            .when(pl.col(age_col) >= 74)
+                            .then(pl.lit('75+'))
+                            .otherwise(pl.lit('75+'))
+                            .alias(age_range_col)
+                    )
+                else:
+                    df[age_range_col] = pd.cut(
+                        df[age_col],
+                        bins=[17, 24, 34, 44, 54, 64, 74, 200],
+                        labels=[
+                            "18-24",
+                            "25-34", 
+                            "35-44",
+                            "45-54",
+                            "55-64",
+                            "65-74",
+                            "75+"
+                        ],
+                    )
+                return df
+            return wrapper
+        return decorator
+
+
+@dataclass
 class FindlayVoterFileConfig:
+    model_config: ModelConfig = FindlayModelConfig()
     levy_election_date = datetime.strptime("2025-05-06", "%Y-%m-%d").date()
-    PARTY_WEIGHTS = {
-        'D': 1.5,  # Democrats weighted highest
-        'R': 1.0,  # Republicans weighted higher than Independents
-        'I': 1.2   # Independents as baseline
-    }
-    BASE_COLUMNS = [
-        "SOS_VOTERID", 
-        "PRECINCT_NAME", 
-        "PARTY_AFFILIATION", 
-        "WARD", "AGE",
-        "AGE_RANGE", 
-        "CATEGORY", 
-        "WEIGHT",
-        'VOTED_MAY_LEVY', 
-        'VOTED_IN_NOV', 
-        'NO_IN_NOV_YES_IN_MAY'
-    ]
-    PRIMARY_COLUMNS = {}
-    GENERAL_COLUMNS = {}
-    ELECTION_DATES = {}
-    ELECTION_COLUMNS = []
+    NOVEMBER_RESULTS_COLS: ClassVar[list[str]] = ['nov_for', 'nov_against', 'nov_levy_total', 'nov_for_share', 'nov_against_share']
+    PREDICTION_LEVEL_COLS: ClassVar[list[str]] = ['lean_against', 'lean_for', 'strongly_against', 'strongly_for',  'swing_against',]
+    PREDICTION_TOTAL_COLS: ClassVar[list[str]] = ['total_for_share', 'total_against_share', 'total_swing_share']
+    PRIMARY_COLUMNS: ClassVar[dict[str, str]] = {}
+    GENERAL_COLUMNS: ClassVar[dict[str, str]] = {}
+    ELECTION_DATES: ClassVar[dict[str, datetime.date]] = {}
+    ELECTION_COLUMNS: ClassVar[list[str]] = []
+    AGE_RANGE_SORTED: ClassVar = []
+    NOVEMBER_ELECTION_NAME: ClassVar[str] = 'GENERAL-11/07/2023'
 
 class FindlayVoterFile:
-    data: pl.DataFrame
-    config: FindlayVoterFileConfig
+    data: pd.DataFrame
+    config: ModelColumnSetup
     model_data: pd.DataFrame
-    weighted_data: pd.DataFrame
-    primary_scores: pd.DataFrame
-    weighted_precinct_category_counts: pd.DataFrame
-    turnout_data: pd.DataFrame
-    current_votes: pd.DataFrame
-    election_results: pd.DataFrame
-    _categories: list[str]
-    _last4_primaries: list[str]
-    _last4_generals: list[str]
-
+    current_votes: pd.DataFrame = None
+    election_results: pd.DataFrame = None
+    precinct_turnout_stats: pd.DataFrame = None
+    election_turnout_stats: pd.DataFrame = None
     def __init__(self):
-        self.config = FindlayVoterFileConfig()
         self.load_early_votes()
         self.load_data()
-        self.load_model_data()
-        self.load_weighted_data()
-        self.aggregate_data()
-        self.include_election_results()
-
+        self.transform_election_data()
+        self.load_election_results()
+        self.create_election_turnout_stats()
+        self.create_model_dataset()
+        self.calculate_statistics()
+    
+    @DataWrapper.format_date(FindlayEarlyVoteColumns.DATE_ENTERED, FindlayEarlyVoteColumns.DATE_RETURNED)
     def load_early_votes(self):
         vote_lists = []
-        for f in EARLY_VOTE.glob("*.csv"):
+        for f in FilePaths.EARLY_VOTE.glob("*.csv"):
             f = Path(f)
             df = pd.read_csv(f)
-            df['DATE ENTERED:'] = pd.to_datetime(df['DATE ENTERED:'])
-            if 'DATE RETURNED:' in df.columns:
-                df['DATE RETURNED:'] = pd.to_datetime(df['DATE RETURNED:'])
             ic(f.stem)
             if 'In Office' in f.stem:
-                df['Vote Method'] = 'In-Person'
+                df[FindlayEarlyVoteColumns.VOTE_METHOD] = VotingMethod.IN_PERSON
             elif 'By Mail' in f.stem:
-                df['Vote Method'] = 'Mail'
+                df[FindlayEarlyVoteColumns.VOTE_METHOD] = VotingMethod.MAIL
             vote_lists.append(df)
-        self.current_votes = pd.concat(vote_lists).drop_duplicates(subset=['STATE ID#'])
+        _current_votes = pd.concat(vote_lists)
+        self.current_votes = _current_votes.drop_duplicates(subset=[FindlayEarlyVoteColumns.VOTER_ID])
+        ic("All Early Votes: ", _current_votes[FindlayEarlyVoteColumns.VOTER_ID].count())
+        ic("Unique Early Votes: ", self.current_votes[FindlayEarlyVoteColumns.VOTER_ID].nunique())
+        return self.current_votes
 
+    @DataWrapper.create_age_range(
+        age_col=FindlayVoterFileColumns.AGE, 
+        age_range_col=FindlayVoterFileColumns.AGE_RANGE)
+    @DataWrapper.create_age_column(
+        date_of_birth_col=FindlayVoterFileColumns.DATE_OF_BIRTH, 
+        age_col_name=FindlayVoterFileColumns.AGE)
+    @DataWrapper.format_date(
+        FindlayVoterFileColumns.DATE_OF_BIRTH, 
+        FindlayVoterFileColumns.REGISTRATION_DATE, 
+        fmt="%Y-%m-%d")
     def load_data(self):
-        _data = pl.scan_csv(list(DATA.glob("*.txt")), separator=',', encoding='utf8-lossy')
+        _data = pl.scan_csv(list(FilePaths.DATA.glob("*.txt")), separator=',', encoding='utf8-lossy')
         _data = _data.filter(
-            (pl.col("CITY_SCHOOL_DISTRICT") == "FINDLAY CITY SD")
-            & (pl.col("COUNTY_NUMBER") == 32)
+            (pl.col(FindlayVoterFileColumns.CITY_SCHOOL_DISTRICT) == "FINDLAY CITY SD")
+            & (pl.col(FindlayVoterFileColumns.COUNTY_NUMBER) == 32)
         )
-        _data = _data.with_columns(
-            pl.col("DATE_OF_BIRTH").str.strptime(pl.Datetime, format="%Y-%m-%d"),
-            pl.col("REGISTRATION_DATE").str.strptime(pl.Datetime, format="%Y-%m-%d"),
-        )
-        _data = _data.with_columns(
-            # Calculate age in years
-            (
-            (pl.lit(datetime.now()) - pl.col("DATE_OF_BIRTH"))
-            .dt.total_days()
-            // 365  # Integer division to get approximate years
-        ).cast(pl.Int64).alias("AGE")
-                )
-        data = _data.collect().to_pandas()
-        data['PARTY_AFFILIATION'] = data['PARTY_AFFILIATION'].where(data['PARTY_AFFILIATION'] != '', 'I')
-        data["AGE_RANGE"] = pd.cut(
-            data["AGE"],
-            bins=[17, 24, 34, 44, 54, 64, 74, 200],
-            labels=[
-                "18-24",
-                "25-34", 
-                "35-44",
-                "45-54",
-                "55-64",
-                "65-74",
-                "75+"
-            ],
-        )
-        data['WARD'] = data['PRECINCT_NAME'].str[:-1]
-        data['CATEGORY'] = data['AGE_RANGE'].astype(str) + '-' + data['PARTY_AFFILIATION'].astype(str)
-        self._categories = data['CATEGORY'].unique().tolist()
-        data['WEIGHT'] = data['PARTY_AFFILIATION'].map(self.config.PARTY_WEIGHTS).fillna(1.0)
-        self.config.ELECTION_DATES = {
-                x: datetime.strptime(x.split("-")[1], "%m/%d/%Y").date()
-                    for x in data.columns if "GENERAL" in x or "PRIMARY" in x
-            }
-        
-        self.config.PRIMARY_COLUMNS = {k: v for k, v in self.config.ELECTION_DATES.items() if "PRIMARY" in k}
-        self.config.GENERAL_COLUMNS = {k: v for k, v in self.config.ELECTION_DATES.items() if "GENERAL" in k}
-        self._last4_primaries = list(self.config.PRIMARY_COLUMNS.keys())[-4:]
-        self._last4_generals = list(self.config.GENERAL_COLUMNS.keys())[-4:]
-        self.config.ELECTION_COLUMNS = self._last4_primaries + self._last4_generals
-        data = data.dropna(axis=1, how="all")
-        self.data = data
-        self.data['VOTED_MAY_LEVY'] = self.data['SOS_VOTERID'].isin(self.current_votes['STATE ID#'])
-        self.data['VOTED_IN_NOV'] = self.data[list(self.config.GENERAL_COLUMNS.keys())[-1]].astype(bool)
-        self.data['NO_IN_NOV_YES_IN_MAY'] = ~self.data['VOTED_IN_NOV'] & self.data['VOTED_MAY_LEVY']
-
+        # Collect the LazyFrame to a DataFrame first
+        self.data = _data.collect().to_pandas()
+        return self.data
     
-    def load_model_data(self):
-        model_data: pd.DataFrame = self.data[self.config.BASE_COLUMNS + self.config.ELECTION_COLUMNS]
-        model_data[self.config.ELECTION_COLUMNS] = model_data[self.config.ELECTION_COLUMNS].map(lambda x: 1 if x else 0)
-        model_data['P_SCORE'] = model_data[self._last4_primaries].sum(axis=1).round(2)
-        model_data['G_SCORE'] = model_data[self._last4_generals].sum(axis=1).round(2)
-        model_data['PERCENT_SCORE'] = model_data[self._last4_primaries + self._last4_generals].sum(axis=1).round(2)
-        self.model_data = model_data
-    
-    def load_weighted_data(self):
-        weighted_data = self.model_data.copy()
-        weighted_data['P_SCORE'] = (weighted_data['P_SCORE'] * weighted_data['WEIGHT']).round(2)
-        weighted_data['G_SCORE'] = (weighted_data['G_SCORE'] * weighted_data['WEIGHT']).round(2)
-        weighted_data['PERCENT_SCORE'] = (weighted_data['PERCENT_SCORE'] * weighted_data['WEIGHT']).round(2)
-        self.weighted_precinct_category_counts = weighted_data.groupby(['PRECINCT_NAME', 'CATEGORY'])['WEIGHT'].sum().round(2).unstack(fill_value=0)
-        self.weighted_data = weighted_data
-
-    def aggregate_data(self):
-        self.primary_scores = self.weighted_data.groupby('CATEGORY').agg(
-            {
-                'G_SCORE': 'mean', 
-                'P_SCORE': 'mean',
-                'PERCENT_SCORE': 'mean'
-            }
-        ).round(2).reset_index()
-        self.turnout_data = self.model_data[self.model_data[list(self.config.GENERAL_COLUMNS.keys())[-1]] > 0]
-        self.turnout_data['ward'] = self.turnout_data['PRECINCT_NAME'].str[:-1]
-        return self
-    
-    def include_election_results(self):
-        election_results = pd.read_csv(RESULTS).dropna(how='all', axis=1)
-        election_results['for'] = pd.to_numeric(election_results['for'], errors='coerce').fillna(0)
-        election_results['ward'] = election_results['precinct'].str[:-1]
-        _election_cols = list(election_results.columns)
-        election_results = election_results[[_election_cols.pop(_election_cols.index('ward'))] + _election_cols]
-        election_results['nov_for_pct'] = (election_results['for'] / election_results['total']).round(4)
-        election_results['nov_against_pct'] = (election_results['against'] / election_results['total']).round(4)
-        self.election_results = election_results
-        return self
-
-
-class ElectionReconstruction:
-    data: FindlayVoterFile
-    config: FindlayVoterFileConfig
-    results_by_precinct: list[dict]
-    age_pct: pd.DataFrame
-    november_counts: pd.DataFrame = None
-    november_total_voters: pd.DataFrame = None
-    november_proportions: pd.DataFrame = None
-    november_proportions_cols: list[str] = None
-    november_turnout: pd.DataFrame
-    election_results: pd.DataFrame
-    prepared_election_results: pd.DataFrame = None
-    ecological_results: dict = None
-    comparison_results: dict = None
-    may_prediction_votes: pd.DataFrame = None
-    prediction_dummies: pd.DataFrame = None
-    prediction_by_age_range: pd.DataFrame = None
-    prediction_by_ward: pd.DataFrame = None
-    prediction_by_precinct: pd.DataFrame = None
-    prediction_and_results: pd.DataFrame = None
-    def __init__(self):
-        self.data = FindlayVoterFile()
-        self.config = self.data.config
-        self.november_turnout = self.data.turnout_data
-        self.election_results = self.data.election_results
-        # self.estimate_by_precinct()
-
-
-    def run(self):
-        self.get_november_turnout_counts()
-        self.get_november_turnout_proportions()
-        self.get_november_age_pivot()
-        self.prepare_election_results()
-        self.build_ecological_regression()
-        self.build_comparison_model1()
-        self.build_logistic_regression()
-        self.build_comparison_model2()
-        self.calculate_percentages()
-        return self
-
-    def get_november_turnout_counts(self):
-        self.november_counts = self.november_turnout.groupby(['PRECINCT_NAME', 'AGE_RANGE']).size().reset_index(name='count')
-        self.november_total_voters = self.november_turnout.groupby('PRECINCT_NAME').size().reset_index(name='total')
-        return self
-    
-    def get_november_turnout_proportions(self):
-        self.november_proportions = self.november_counts.merge(self.november_total_voters, on='PRECINCT_NAME')
-        self.november_proportions['prop_age'] = self.november_proportions['count'] / self.november_proportions['total']
-        return self
-    
-    def get_november_age_pivot(self):
-        self.november_age_pivot = self.november_proportions.pivot(index='PRECINCT_NAME', columns='AGE_RANGE', values='prop_age').fillna(0).reset_index()
-        self.november_proportions_cols = self.november_age_pivot.columns.tolist()
-        self.november_proportions_cols.pop(self.november_proportions_cols.index('PRECINCT_NAME'))
-        return self
-    
-    def prepare_election_results(self):
-        self.election_results = self.election_results.rename(columns={"precinct": "PRECINCT_NAME"})
-        data = self.november_age_pivot.merge(self.election_results, left_on="PRECINCT_NAME", right_on="PRECINCT_NAME")
-        data['p_for'] = data['for'] / data['total']
-        self.prepared_election_results = data
-        return self
-
-    def build_ecological_regression(self):
-        eco_results = {}
-        # Select numeric age range columns for X
-        X = self.prepared_election_results[self.november_proportions_cols]
-        y = self.prepared_election_results['p_for'].astype(float)
-
-        X_np = X.to_numpy()
-        y_np = y.to_numpy()
-
-        # Add age information - modified to work with the actual data structure
-        age_ranges = ['0-18', '18-25', '26-35', '36-45', '46-55', '56-65', '66-75', '75+']
-
-        # Create a mapping from age range to rank
-        age_rank_map = {age: i for i, age in enumerate(age_ranges)}
-
-        # Create a mapping from age range to rank
-        for age_range in age_ranges:
-            if age_range in X.columns:
-                # Create a temporary column for this age range's rank
-                X[f'{age_range}_rank'] = age_rank_map[age_range] * X[age_range]
-
-        # Sum up the weighted ranks to get a single age rank column
-        X['age_rank'] = sum(X[f'{age_range}_rank'] for age_range in age_ranges if f'{age_range}_rank' in X.columns)
-
-        # Drop the temporary columns
-        for age_range in age_ranges:
-            if f'{age_range}_rank' in X.columns:
-                X = X.drop(columns=[f'{age_range}_rank'])
-
-        # Ensure age_rank is numeric
-        X['age_rank'] = pd.to_numeric(X['age_rank'], errors='coerce').fillna(0)
-
-        # Target variable
-        y = self.prepared_election_results['p_for'].astype(float)
-
-        # Fit constrained least squares model (beta coefficients between 0 and 1)
-        eco_results['result'] = lsq_linear(X_np, y_np, bounds=(0, 1))
-        eco_results['beta_k_constrained'] = eco_results['result'].x
-
-        # Map coefficients to age groups
-        eco_results['age_groups'] = sorted(self.november_turnout['AGE_RANGE'].dropna().astype(str).unique().tolist())
-        eco_results['beta_k_constrained_series'] = pd.Series(eco_results['beta_k_constrained'], index=eco_results['age_groups'])
-        eco_results['X_np'] = X_np
-        eco_results['y_np'] = y_np
-        eco_results['X'] = X
-        eco_results['y'] = y
-        self.ecological_results = eco_results
-
-        ic("Constrained Beta Coefficients:")
-        ic(eco_results['beta_k_constrained_series'])
-        return self
-    
-    def build_comparison_model1(self):
-        comparison_results = {}
-        # Fit OLS model to estimate initial group probabilities
-        model = sm.OLS(self.ecological_results['y_np'], self.ecological_results['X_np']).fit()
-        beta_k = model.params
-
-        predicted_p_for = model.fittedvalues
-        actual_p_for = self.ecological_results['y']
-
-        r_squared = model.rsquared
-        ic(f"R-squared: {r_squared:.4f}")
-
-        mae = np.mean(np.abs(actual_p_for - predicted_p_for))
-        ic(f"Mean Absolute Error: {mae:.4f}")
-
-        rmse = np.sqrt(np.mean((actual_p_for - predicted_p_for)**2))
-        ic(f"Root Mean Squared Error: {rmse:.4f}")
-
-        predicted_for_votes = predicted_p_for * self.prepared_election_results['total']
-        actual_for_votes = self.prepared_election_results['for']
-        mae_votes = np.mean(np.abs(actual_for_votes - predicted_for_votes))
-        ic(f"MAE for 'for' votes: {mae_votes:.2f}")
-        ic("Beta coefficients:")
-        ic(beta_k)
-
-        comparison_results['predicted_p_for'] = predicted_p_for
-        comparison_results['actual_p_for'] = actual_p_for
-        comparison_results['r_squared'] = r_squared
-        comparison_results['mae'] = mae
-        comparison_results['rmse'] = rmse
-        comparison_results['mae_votes'] = mae_votes
-        comparison_results['beta_k'] = beta_k
-        self.comparison_results = comparison_results
-        if any(beta_k < 0) or any(beta_k > 1):
-            ic("Note: Some beta coefficients are outside [0,1]")
-        return self
-    
-    
-    def build_logistic_regression(self):
-        # Step 1: Clip beta_k to [0,1] to ensure valid probabilities
-        beta_k_clipped = np.clip(self.comparison_results['beta_k'], 0, 1)
-
-        # Create a dictionary mapping age ranges to their corresponding beta values
-        age_beta_map = {age: beta for age, beta in zip(self.ecological_results['age_groups'], beta_k_clipped)}
-
-        # Step 2: Assign initial probabilities to voters based on age group
-        self.november_turnout['prob_for'] = self.november_turnout['AGE_RANGE'].map(age_beta_map)
-
-        # Ensure all probabilities are valid (between 0 and 1) and not NaN
-        self.november_turnout['prob_for'] = self.november_turnout['prob_for'].fillna(0)  # Replace NaN with 0.5
-        self.november_turnout['prob_for'] = self.november_turnout['prob_for'].clip(0, 1)  # Clip to [0, 1]
-
-        # Step 3: Calculate predicted votes
-        np.random.seed(42)  # For reproducibility
-        self.november_turnout['simulated_vote'] = np.random.binomial(1, self.november_turnout['prob_for'])
-
-        X_features = pd.get_dummies(self.november_turnout[['AGE_RANGE', 'PRECINCT_NAME']], drop_first=True)
-        y_target = self.november_turnout['simulated_vote']
-
-        X_train, X_test, y_train, y_test = train_test_split(X_features, y_target, test_size=0.2, random_state=42)
-
-        log_reg = LogisticRegression(max_iter=1000)
-        log_reg.fit(X_train, y_train)
-    
-        y_pred = log_reg.predict(X_test)
-        ic("\nLogistic Regression Performance:")
-        ic(f"Accuracy: {accuracy_score(y_test, y_pred):.4f}")
-        ic("Classification Report:")
-        print(classification_report(y_test, y_pred))
-
-        self.november_turnout['predicted_prob_for_logreg'] = log_reg.predict_proba(X_features)[:, 1]
-
-        # Step 9: Assign vote predictions based on logistic regression probabilities
-        self.november_turnout['vote_prediction_logreg'] = np.where(
-            self.november_turnout['predicted_prob_for_logreg'] < 0.5, 'against',
-            np.where(self.november_turnout['predicted_prob_for_logreg'] > 0.65, 'for', 'swing')
-        )
-        
-        return self
-    
-    def build_comparison_model2(self):
-        # --- Comparison of Predictions ---
-        # Compare aggregated logistic regression predictions to actual precinct-level p_for
-
-        predicted_p_for_logreg = self.november_turnout.groupby('PRECINCT_NAME')['predicted_prob_for_logreg'].mean()
-        comparison = pd.DataFrame({
-            'actual_p_for': self.prepared_election_results.set_index('PRECINCT_NAME')['p_for'],
-            'predicted_p_for_logreg': predicted_p_for_logreg
-        })
-        ic("\nComparison of Aggregated Predictions vs. Actual Precinct Proportions:")
-        ic(comparison)
-        # --- Original OLS-Based Predictions ---
-        # Retain OLS-based predictions for comparison
-        # Create a dictionary mapping age ranges to their corresponding beta values
-
-        beta_k_dict = {age: beta for age, beta in zip(self.ecological_results['age_groups'], self.comparison_results['beta_k'])}
-        self.november_turnout['predicted_prob_for'] = self.november_turnout['AGE_RANGE'].map(beta_k_dict).astype(float)
-        self.november_turnout['vote_prediction'] = pd.cut(
-            self.november_turnout['predicted_prob_for'],
-            bins=[-np.inf, 0.45, 0.55, np.inf],
-            labels=['against', 'swing', 'for']
-        )
-        prediction_dummies = pd.get_dummies(
-            self.november_turnout['vote_prediction'],
-            prefix='prediction',
-            columns=['against', 'swing', 'for']
-        )
-        
-        # Ensure all necessary columns exist
-        for col in ['prediction_against', 'prediction_swing', 'prediction_for']:
-            if col not in prediction_dummies.columns:
-                prediction_dummies[col] = 0
+    def transform_election_data(self):
+        self.data = self.data.fillna(np.nan)
+        self.data.replace(r'^\s*$', np.nan, regex=True, inplace=True)
+        self.data = self.data.dropna(how='all', axis=1)
             
-        self.november_turnout[list(prediction_dummies.columns)] = prediction_dummies
-
-        # --- Calculate Results ---
-        prediction_by_precinct = self.november_turnout.groupby(['ward', 'PRECINCT_NAME'])[list(prediction_dummies.columns)].sum().reset_index()
-        results_and_prediction = self.election_results.merge(prediction_by_precinct, left_on='PRECINCT_NAME', right_on='PRECINCT_NAME')
-        results_and_prediction['for_diff'] = results_and_prediction['for'] - results_and_prediction['prediction_for']
-        results_and_prediction['against_diff'] = results_and_prediction['against'] - results_and_prediction['prediction_against']
-        result_agg_cols = {x: 'sum' for x in list(prediction_dummies.columns)}
-        result_agg_cols['SOS_VOTERID'] = 'count'
-        may_prediction_votes = (self.november_turnout[self.november_turnout['VOTED_MAY_LEVY'] == 1]
-                                .groupby(['ward', 'PRECINCT_NAME', 'AGE_RANGE'])
-                                .agg(result_agg_cols)
-                                .rename(columns={'SOS_VOTERID': 'total_votes'}))
-        self.may_prediction_votes = may_prediction_votes
-        self.prediction_dummies = prediction_dummies
-        return self
-
-    def calculate_percentages(self):
-        # Ensure all necessary columns exist in the prediction data
-        required_columns = ['prediction_for', 'prediction_against', 'prediction_swing']
+        # Use the variables
+        _political_party = FindlayVoterFileColumns.PARTY_AFFILIATION
+        self.data[_political_party] = self.data[_political_party].fillna('I')
+        self.data[FindlayVoterFileColumns.WARD] = self.data[FindlayVoterFileColumns.PRECINCT_NAME].str[:-1]
         
-        prediction_by_precinct = self.may_prediction_votes.groupby('PRECINCT_NAME')[
-            ['total_votes'] + list(self.prediction_dummies.columns)
-        ].sum().reset_index()
+        # Set AGE_RANGE_SORTED
+        FindlayVoterFileConfig.AGE_RANGE_SORTED = [
+            "18-24",
+            "25-34", 
+            "35-44",
+            "45-54",
+            "55-64",
+            "65-74",
+            "75+"
+        ]
         
-        # Calculate percentages only if columns exist
-        total_votes = prediction_by_precinct['total_votes']
+        # data['CATEGORY'] = data[_age_range].astype(str) + '-' + data[_political_party].astype(str)
+        self.data['WEIGHT'] = self.data[FindlayVoterFileColumns.PARTY_AFFILIATION].map(FindlayVoterFileConfig.model_config.PARTY_WEIGHTS).fillna(1.0)
+        FindlayVoterFileConfig.ELECTION_DATES = {
+                x: datetime.strptime(x.split("-")[1], "%m/%d/%Y").date()
+                    for x in self.data.columns if "GENERAL" in x or "PRIMARY" in x
+            }
         
-        for col in required_columns:
-            if col in prediction_by_precinct.columns:
-                prediction_by_precinct[f'pct_{col.split("_")[1]}'] = (
-                    prediction_by_precinct[col] / total_votes
-                ).round(2)
-            else:
-                prediction_by_precinct[col] = 0
-                prediction_by_precinct[f'pct_{col.split("_")[1]}'] = 0
-        
-        prediction_and_results = prediction_by_precinct.merge(self.election_results, left_on='PRECINCT_NAME', right_on='PRECINCT_NAME')
-        prediction_and_results['better_than_nov'] = prediction_and_results['pct_for'] > prediction_and_results['nov_for_pct']
-        prediction_and_results['winning'] = prediction_and_results['prediction_for'] >= prediction_and_results['prediction_against']
+        FindlayVoterFileConfig.PRIMARY_COLUMNS = {k: v for k, v in FindlayVoterFileConfig.ELECTION_DATES.items() if "PRIMARY" in k}
+        FindlayVoterFileConfig.GENERAL_COLUMNS = {k: v for k, v in FindlayVoterFileConfig.ELECTION_DATES.items() if "GENERAL" in k}
+        FindlayVoterFileConfig.ELECTION_COLUMNS = (_last4_primaries := (list(FindlayVoterFileConfig.PRIMARY_COLUMNS.keys())[-4:])) + (_last4_generals := (list(FindlayVoterFileConfig.GENERAL_COLUMNS.keys())[-4:]))
+        _all_elections = list(set(FindlayVoterFileConfig.ELECTION_COLUMNS) | set(FindlayVoterFileConfig.PRIMARY_COLUMNS.keys()) | set(FindlayVoterFileConfig.GENERAL_COLUMNS.keys()))
+        _all_primaries = list(FindlayVoterFileConfig.PRIMARY_COLUMNS.keys())
+        _all_generals = list(FindlayVoterFileConfig.GENERAL_COLUMNS.keys())
+        self.data = self.data.fillna(np.nan)
+        self.data[_all_elections] = self.data[_all_elections].fillna(0).astype(bool)
+        self.data[VoterScoringColumns.PRIMARY_SCORE] = self.data[_last4_primaries].sum(axis=1)
+        self.data['P_SCORE_ALL'] = self.data[_all_primaries].sum(axis=1)
+        self.data[VoterScoringColumns.GENERAL_SCORE] = self.data[_last4_generals].sum(axis=1)
+        self.data['G_SCORE_ALL'] = self.data[_all_generals].sum(axis=1)
+        self.data[FindlayVoterFileColumns.VOTED_MAY_LEVY] = self.data[FindlayVoterFileColumns.VOTER_ID].isin(self.current_votes[FindlayEarlyVoteColumns.VOTER_ID])
+        self.data[FindlayVoterFileColumns.VOTED_NOV_LEVY] = self.data[list(FindlayVoterFileConfig.GENERAL_COLUMNS.keys())[-1]]
+        self.data[FindlayVoterFileColumns.VOTED_IN_BOTH] = self.data[FindlayVoterFileColumns.VOTED_MAY_LEVY] & self.data[FindlayVoterFileColumns.VOTED_NOV_LEVY]
+        return self.data
+    
+    def create_election_turnout_stats(self):
+        _turnout_stats = []
+        for e in [FindlayVoterFileConfig.PRIMARY_COLUMNS.keys(), FindlayVoterFileConfig.GENERAL_COLUMNS.keys()]:
+            for election in e:
+                _election_details = election.split('-')
+                _election_type = _election_details[0].lower()
+                _election_date = datetime.strptime(_election_details[1], "%m/%d/%Y").date()
+                if _election_date > date(2014, 11, 7):
+                    _eligible_voters = self.data[self.data['REGISTRATION_DATE'].dt.date <= _election_date]
 
-        prediction_by_ward = self.may_prediction_votes.groupby('ward')[['total_votes'] + list(self.prediction_dummies.columns)].sum().reset_index()
-        prediction_by_ward['pct_for'] = (prediction_by_ward['prediction_for'] / prediction_by_ward['total_votes']).round(2)
-        prediction_by_ward['pct_against'] = (prediction_by_ward['prediction_against'] / prediction_by_ward['total_votes']).round(2)
-        prediction_by_ward['pct_swing'] = (prediction_by_ward['prediction_swing'] / prediction_by_ward['total_votes']).round(2)
-        prediction_by_ward['ward_pct_of_vote'] = (prediction_by_ward['total_votes'] / prediction_by_ward['total_votes'].sum()).round(2)
+                    for precinct in _eligible_voters[FindlayVoterFileColumns.PRECINCT_NAME].unique():
+                        _precinct_groupby = _eligible_voters[
+                            _eligible_voters[FindlayVoterFileColumns.PRECINCT_NAME] == precinct
+                        ].groupby(
+                            [
+                                FindlayVoterFileColumns.WARD,
+                                FindlayVoterFileColumns.PRECINCT_NAME, 
+                                FindlayVoterFileColumns.AGE_RANGE
+                            ]
+                        ).agg(
+                            {
+                                election: 'sum',
+                                FindlayVoterFileColumns.VOTER_ID: 'count'
+                            }
+                        ).rename(
+                            columns={
+                                election: 'voted_count',
+                                FindlayVoterFileColumns.VOTER_ID: 'registered_voters'
+                            }
+                        )
+                        _precinct_groupby['turnout'] = (_precinct_groupby['voted_count'] / _precinct_groupby['registered_voters']).round(4).fillna(0)
+                        _precinct_groupby['year'] = _election_date.year
+                        _precinct_groupby['election_type'] = _election_type
+                        _precinct_groupby['election_date'] = _election_date
+                        _precinct_groupby = _precinct_groupby.reset_index()
+                        _turnout_stats.append(_precinct_groupby)
+        self.precinct_turnout_stats = pd.concat(_turnout_stats)
+    
+    def load_election_results(self):
+        election_results = pd.read_csv(FilePaths.RESULTS).dropna(how='all', axis=1)
+        election_results[NovemberResultsColumns.FOR] = pd.to_numeric(election_results['for'], errors='coerce').fillna(0)
+        election_results[NovemberResultsColumns.AGAINST] = pd.to_numeric(election_results['against'], errors='coerce').fillna(0)
+        election_results[NovemberResultsColumns.LEVY_TOTAL] = pd.to_numeric(election_results['total'], errors='coerce').fillna(0)
+        election_results[FindlayEarlyVoteColumns.WARD] = election_results[FindlayEarlyVoteColumns.PRECINCT_NAME].str[:-1]
+        ward_results = election_results.groupby(FindlayEarlyVoteColumns.WARD).agg(
+            {
+                NovemberResultsColumns.FOR: 'sum',
+                NovemberResultsColumns.AGAINST: 'sum',
+                NovemberResultsColumns.LEVY_TOTAL: 'sum'
+            }
+        ).rename(columns={
+            NovemberResultsColumns.FOR: 'nov_ward_for_count',
+            NovemberResultsColumns.AGAINST: 'nov_ward_against_count',
+            NovemberResultsColumns.LEVY_TOTAL: 'nov_ward_total_count'
+        })
+        precinct_results = election_results.groupby(FindlayEarlyVoteColumns.PRECINCT_NAME).agg(
+            {
+                NovemberResultsColumns.FOR: 'sum',
+                NovemberResultsColumns.AGAINST: 'sum',
+                NovemberResultsColumns.LEVY_TOTAL: 'sum'
+            }
+        ).rename(columns={
+            NovemberResultsColumns.FOR: 'nov_precinct_for_count',
+            NovemberResultsColumns.AGAINST: 'nov_precinct_against_count',
+            NovemberResultsColumns.LEVY_TOTAL: 'nov_precinct_total_count'
+        })
+        
+        election_results = election_results.merge(ward_results, left_on=FindlayEarlyVoteColumns.WARD, right_on=FindlayEarlyVoteColumns.WARD, how='left')
+        election_results = election_results.merge(precinct_results, left_on=FindlayEarlyVoteColumns.PRECINCT_NAME, right_on=FindlayEarlyVoteColumns.PRECINCT_NAME, how='left')
+        election_results['nov_for_share'] = (election_results[NovemberResultsColumns.FOR] / election_results[NovemberResultsColumns.LEVY_TOTAL]).round(4)
+        election_results['nov_against_share'] = (election_results[NovemberResultsColumns.AGAINST] / election_results[NovemberResultsColumns.LEVY_TOTAL]).round(4)
+        
+        # Calculate for and against shares at ward level
+        election_results['nov_ward_for_share'] = (election_results['nov_ward_for_count'] / election_results['nov_ward_total_count']).round(4)
+        election_results['nov_ward_against_share'] = (election_results['nov_ward_against_count'] / election_results['nov_ward_total_count']).round(4)
+        
+        # Calculate for and against shares at precinct level
+        election_results['nov_precinct_for_share'] = (election_results['nov_precinct_for_count'] / election_results['nov_precinct_total_count']).round(4)
+        election_results['nov_precinct_against_share'] = (election_results['nov_precinct_against_count'] / election_results['nov_precinct_total_count']).round(4)
+        
+        self.election_results = election_results
 
-        prediction_by_age_range = self.may_prediction_votes.groupby('AGE_RANGE')[list(self.prediction_dummies.columns)].sum().reset_index()
-        prediction_by_age_range['total_votes'] = prediction_by_age_range['prediction_for'] + prediction_by_age_range['prediction_against'] + prediction_by_age_range['prediction_swing']
-        prediction_by_age_range['pct_for'] = (prediction_by_age_range['prediction_for'] / prediction_by_age_range['total_votes']).round(2)
-        prediction_by_age_range['pct_against'] = (prediction_by_age_range['prediction_against'] / prediction_by_age_range['total_votes']).round(2)
-        self.prediction_by_age_range = prediction_by_age_range
-        self.prediction_by_ward = prediction_by_ward
-        self.prediction_by_precinct = prediction_by_precinct
-        self.prediction_and_results = prediction_and_results
-        return self
-# Assess OLS model accuracy
+        for precinct in self.election_results['precinct'].unique():
+            _precinct_registered_voters = self.data[self.data['PRECINCT_NAME'] == precinct]['SOS_VOTERID'].count()
+            _precinct_voted_voters = (self.election_results[self.election_results['precinct'] == precinct]['nov_precinct_total_count'].sum())
+            _precinct_turnout = (_precinct_voted_voters / _precinct_registered_voters).round(4)
+            self.election_results.loc[self.election_results['precinct'] == precinct, 'nov_precinct_turnout'] = _precinct_turnout
+
+        for ward in self.election_results['ward'].unique():
+            _ward_registered_voters = self.data[self.data['WARD'] == ward]['SOS_VOTERID'].count()
+            _ward_voted_voters = (self.election_results[self.election_results['ward'] == ward]['nov_ward_total_count']).unique()[0]
+            _ward_turnout = (_ward_voted_voters / _ward_registered_voters).round(4)
+            self.election_results.loc[self.election_results['ward'] == ward, 'nov_ward_turnout'] = _ward_turnout
+
+    def create_model_dataset(self):
+        self.model_data = self.data.merge(self.election_results, left_on=FindlayVoterFileColumns.PRECINCT_NAME, right_on=FindlayEarlyVoteColumns.PRECINCT_NAME)
+        _primary_turnout_stats_precinct = self.precinct_turnout_stats[self.precinct_turnout_stats['election_type'] == 'primary'].groupby(
+            [
+                FindlayVoterFileColumns.PRECINCT_NAME, 
+                FindlayVoterFileColumns.AGE_RANGE
+            ]
+        ).agg(
+            {
+                'turnout': 'mean'
+            }
+        ).reset_index().rename(columns={'turnout': 'primary_precinct_turnout_mean'})
+        _general_turnout_stats_precinct = self.precinct_turnout_stats[self.precinct_turnout_stats['election_type'] == 'general'].groupby(
+            [
+                FindlayVoterFileColumns.PRECINCT_NAME, 
+                FindlayVoterFileColumns.AGE_RANGE
+            ]
+        ).agg(
+            {
+                'turnout': 'mean'
+            }
+        ).reset_index().rename(columns={'turnout': 'general_precinct_turnout_mean'})
+        _primary_turnout_stats_ward = self.precinct_turnout_stats[self.precinct_turnout_stats['election_type'] == 'primary'].groupby(
+            [
+                FindlayVoterFileColumns.WARD, 
+                FindlayVoterFileColumns.AGE_RANGE
+            ]
+        ).agg(
+            {
+                'turnout': 'mean'
+            }
+        ).reset_index().rename(columns={'turnout': 'primary_ward_turnout_mean'})
+        _general_turnout_stats_ward = self.precinct_turnout_stats[self.precinct_turnout_stats['election_type'] == 'general'].groupby(
+            [
+                FindlayVoterFileColumns.WARD, 
+                FindlayVoterFileColumns.AGE_RANGE
+            ]
+        ).agg(
+            {
+                'turnout': 'mean'
+            }
+        ).reset_index().rename(columns={'turnout': 'general_ward_turnout_mean'})
+
+        _primary_turnout_stats_precinct['primary_precinct_turnout_mean'] = _primary_turnout_stats_precinct['primary_precinct_turnout_mean'].round(4)
+        _general_turnout_stats_precinct['general_precinct_turnout_mean'] = _general_turnout_stats_precinct['general_precinct_turnout_mean'].round(4)
+        _primary_turnout_stats_ward['primary_ward_turnout_mean'] = _primary_turnout_stats_ward['primary_ward_turnout_mean'].round(4)
+        _general_turnout_stats_ward['general_ward_turnout_mean'] = _general_turnout_stats_ward['general_ward_turnout_mean'].round(4)
+        
+        # Merge precinct stats first
+        self.model_data = self.model_data.merge(
+            _primary_turnout_stats_precinct, 
+            left_on=[FindlayVoterFileColumns.PRECINCT_NAME, FindlayVoterFileColumns.AGE_RANGE], 
+            right_on=[FindlayVoterFileColumns.PRECINCT_NAME, FindlayVoterFileColumns.AGE_RANGE], 
+            how='left'
+        )
+        self.model_data = self.model_data.merge(
+            _general_turnout_stats_precinct, 
+            left_on=[FindlayVoterFileColumns.PRECINCT_NAME, FindlayVoterFileColumns.AGE_RANGE], 
+            right_on=[FindlayVoterFileColumns.PRECINCT_NAME, FindlayVoterFileColumns.AGE_RANGE], 
+            how='left'
+        )
+        
+        # Then merge ward stats
+        self.model_data = self.model_data.merge(
+            _primary_turnout_stats_ward, 
+            left_on=[FindlayVoterFileColumns.WARD, FindlayVoterFileColumns.AGE_RANGE], 
+            right_on=[FindlayVoterFileColumns.WARD, FindlayVoterFileColumns.AGE_RANGE], 
+            how='left'
+        )
+        self.model_data = self.model_data.merge(
+            _general_turnout_stats_ward, 
+            left_on=[FindlayVoterFileColumns.WARD, FindlayVoterFileColumns.AGE_RANGE], 
+            right_on=[FindlayVoterFileColumns.WARD, FindlayVoterFileColumns.AGE_RANGE], 
+            how='left'
+        )
+
+    def calculate_statistics(self):
+        primary_elections = list(FindlayVoterFileConfig.PRIMARY_COLUMNS.keys())
+        general_elections = list(FindlayVoterFileConfig.GENERAL_COLUMNS.keys())
+        self.model_data[primary_elections] = self.model_data[primary_elections].astype(bool)
+        self.model_data[general_elections] = self.model_data[general_elections].astype(bool)
+        # self.model_data['primary_score'] = self.model_data[primary_elections].sum(axis=1)
+        # self.model_data['general_score'] = self.model_data[general_elections].sum(axis=1)
+        # self.model_data['total_score'] = self.model_data['primary_score'] + self.model_data['general_score']
+        # self.model_data['total_score_share'] = self.model_data['total_score'] / (len(primary_elections) + len(general_elections))
+        
+
+        self.model_data = self.model_data.merge(calculate_turnout(self.model_data, primary_elections, by_column='AGE_RANGE', district_level='WARD'), on=['AGE_RANGE', 'WARD'], how='left')
+        self.model_data = self.model_data.merge(calculate_turnout(self.model_data, general_elections, by_column='AGE_RANGE', district_level='WARD'), on=['AGE_RANGE', 'WARD'], how='left')
+
+        self.model_data = self.model_data.merge(calculate_turnout(self.model_data, primary_elections, by_column='AGE_RANGE', district_level='PRECINCT_NAME'), on=['AGE_RANGE', 'PRECINCT_NAME'], how='left')
+        self.model_data = self.model_data.merge(calculate_turnout(self.model_data, general_elections, by_column='AGE_RANGE', district_level='PRECINCT_NAME'), on=['AGE_RANGE', 'PRECINCT_NAME'], how='left')
+
+        self.model_data = self.model_data.merge(calculate_turnout(self.model_data, primary_elections, by_column='PARTY_AFFILIATION', district_level='WARD'), on=['PARTY_AFFILIATION', 'WARD'], how='left')
+        self.model_data = self.model_data.merge(calculate_turnout(self.model_data, general_elections, by_column='PARTY_AFFILIATION', district_level='WARD'), on=['PARTY_AFFILIATION', 'WARD'], how='left')
+
+        self.model_data = self.model_data.merge(calculate_turnout(self.model_data, primary_elections, by_column='PARTY_AFFILIATION', district_level='PRECINCT_NAME'), on=['PARTY_AFFILIATION', 'PRECINCT_NAME'], how='left')
+        self.model_data = self.model_data.merge(calculate_turnout(self.model_data, general_elections, by_column='PARTY_AFFILIATION', district_level='PRECINCT_NAME'), on=['PARTY_AFFILIATION', 'PRECINCT_NAME'], how='left')

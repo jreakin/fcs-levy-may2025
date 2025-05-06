@@ -1,0 +1,14 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Use UV
+## Activate Environment
+    - Activate python environment by using 'source .venv/bin/activate'
+  
+# Dependency Management
+    - All installs of dependencies needs to be done using 'uv add'
+
+# Running Python
+    - Running python should be done by using 'uv run {script.py}'
