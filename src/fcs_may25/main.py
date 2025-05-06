@@ -4,11 +4,14 @@ from icecream import ic
 import numpy as np
 from sklearn.discriminant_analysis import StandardScaler
 from sklearn.model_selection import train_test_split
-from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.preprocessing import OneHotEncoder
-from sklearn.metrics import r2_score, mean_squared_error
+from sklearn.metrics import r2_score, mean_squared_error, log_loss
 from tqdm import tqdm
 from sklearn.compose import ColumnTransformer
+import tensorflow as tf
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import Dense, Dropout, Input
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -41,7 +44,28 @@ election_results['nov_for_share'].hist()
 plt.show()
 
 m_data = voterfile.model_data
+november = m_data[m_data['VOTED_NOV_LEVY'] == 1]
+may = m_data[m_data['VOTED_MAY_LEVY'] == 1]
+ward_turnout_expectations = m_data.groupby(['WARD', 'PRECINCT_NAME']).agg(
+    {
+        'primary_precinct_turnout_mean': 'mean',
+        'primary_ward_turnout_mean': 'mean',
+        'general_precinct_turnout_mean': 'mean',
+        'general_ward_turnout_mean': 'mean',
+     }
+)
+ward_turnout_expectations["eligible_voters"] = m_data.groupby(["ward", "precinct"]).size().values
 
+def round_and_cast(_col: pd.Series):
+    return _col.round().astype(int)
+
+def expected_turnout_func(x):
+    return round_and_cast(x * ward_turnout_expectations["eligible_voters"])
+
+ward_turnout_expectations['primary_precinct_turnout_count'] = expected_turnout_func(ward_turnout_expectations['primary_precinct_turnout_mean'])
+ward_turnout_expectations['primary_ward_turnout_count'] = expected_turnout_func(ward_turnout_expectations['primary_ward_turnout_mean'])
+ward_turnout_expectations['general_precinct_turnout_count'] = expected_turnout_func(ward_turnout_expectations['general_precinct_turnout_mean'])
+ward_turnout_expectations['general_ward_turnout_count'] = expected_turnout_func(ward_turnout_expectations['general_ward_turnout_mean'])
 
 # may_election_results = m_data.groupby(['WARD', 'PRECINCT_NAME', 'AGE_RANGE']).agg(
 #     {
@@ -127,350 +151,475 @@ ml_cat.interaction_features.extend([
     g_score_all_age_ward_precinct,
 ])
 
-m_data[m_data['VOTED_NOV_LEVY'] == True]['AGE_RANGE'].value_counts(normalize=True).sort_index()
-m_data[m_data['VOTED_MAY_LEVY'] == True]['AGE_RANGE'].value_counts(normalize=True).sort_index().plot(kind='pie', autopct='%1.1f%%')
-plt.show()
-# november_set = m_data
-# y_pseudo = november_set['nov_for'] / november_set['total']
+nov_age = (
+november['AGE_RANGE']
+    .value_counts(normalize=True)
+    .sort_index()
+    .reset_index()
+    .rename(columns={
+        'proportion': 'nov_count'
+    }))
 
-# # Convert categorical columns to dummy variables
-# categorical_dummies = pd.get_dummies(november_set[ml_cat.category_features + ml_cat.interaction_features],
-#                                   drop_first=True, # Drop first category to avoid multicollinearity
-#                                   dtype=float)      # Convert to float for the model
+may_age = (
+    may['AGE_RANGE']
+    .value_counts(normalize=True)
+    .sort_index()
+    .reset_index()
+    .rename(columns={
+        'proportion': 'may_count'
+    }))
+
+merge_ages = nov_age.merge(may_age, on='AGE_RANGE')
+
+merge_by_ward = (
+    november['WARD']
+    .value_counts(normalize=True)
+    .to_frame()
+    .merge(
+        may['WARD']
+        .value_counts(normalize=True)
+        .to_frame(), 
+        on='WARD')
+    .rename(
+        columns={
+            'proportion_x': 'nov_voters',
+            'proportion_y': 'may_voters'
+        }
+    )
+).sort_index()
+
+nov_ward_results = (
+    voterfile.election_results
+    .groupby('ward')
+    .agg(
+        {
+            'nov_ward_for_count': 'sum',
+            'nov_ward_against_count': 'sum',
+            'nov_levy_total': 'sum',
+            'nov_ward_for_share': 'mean',
+            'nov_ward_against_share': 'mean',
+            'nov_ward_turnout': 'mean',
+
+        }
+    )
+    .reset_index()
+)
+
+may_election_results = (
+    m_data
+    .groupby(['WARD', 'PRECINCT_NAME', 'AGE_RANGE'])
+    .agg(
+        {
+            'VOTED_NOV_LEVY': 'sum',
+            'VOTED_MAY_LEVY': 'sum',
+            'SOS_VOTERID': 'count'
+        })
+    .reset_index()
+    .rename(
+        columns={
+            'VOTED_MAY_LEVY': 'may_total_voted',
+            'VOTED_NOV_LEVY': 'nov_total_voted', 
+            'SOS_VOTERID': 'total_registered_voters'
+        }
+    )
+)
+
+for precinct in m_data['PRECINCT_NAME'].unique():
+    _for_share = m_data[
+    m_data['PRECINCT_NAME'] == precinct]['nov_for_share'].mean()
+
+    _against_share = m_data[
+    m_data['PRECINCT_NAME'] == precinct
+    ]['nov_against_share'].mean()
+
+    for age_range in m_data['AGE_RANGE'].unique():
+        _for_share = m_data[
+        m_data['PRECINCT_NAME'] == precinct][
+        m_data['AGE_RANGE'] == age_range
+        ]['nov_for_share'].mean()
+
+        _against_share = m_data[
+        m_data['PRECINCT_NAME'] == precinct][
+        m_data['AGE_RANGE'] == age_range
+        ]['nov_against_share'].mean()
+        may_election_results.loc[may_election_results['PRECINCT_NAME'] == precinct, 'may_precinct_for_share'] = (
+    may_election_results[
+            may_election_results['PRECINCT_NAME'] == precinct
+            ]['may_total_voted'] * _for_share).round()
+        may_election_results.loc[may_election_results['PRECINCT_NAME'] == precinct, 'may_precinct_against_share'] = (
+    may_election_results[
+            may_election_results['PRECINCT_NAME'] == precinct
+            ]['may_total_voted'] * _against_share).round()
+
+may_ward_results = (
+    may_election_results
+    .groupby('WARD')
+    .agg(
+        {
+            'may_total_voted': 'sum',
+            'total_registered_voters': 'sum'
+        }
+    )
+    .reset_index()
+)
+
+merged_results = (
+    nov_ward_results
+    .merge(
+        may_ward_results, 
+        right_on='WARD', 
+        left_on='ward'
+    )
+)
+
+merged_results['may_ward_turnout'] = (
+    merged_results['may_total_voted'] /
+    merged_results['total_registered_voters']).round(4)
+
+merged_results['may_votes_FOR'] = (
+    merged_results['may_total_voted'] *
+    merged_results['nov_ward_for_share']).astype(int)
+
+merged_results['may_votes_pct_FOR'] = (
+    merged_results['may_votes_FOR'] /
+    merged_results['may_total_voted']).round(4)
+
+merged_results['may_votes_AGAINST'] = (
+    merged_results['may_total_voted'] *
+    merged_results['nov_ward_against_share']).astype(int)
+
+ward_turnout_count = ward_turnout_expectations.groupby('WARD').agg(
+    {
+        'primary_ward_turnout_count': 'sum',
+        'primary_ward_turnout_mean': 'first',
+    }
+)
+ward_turnout_count['primary_ward_turnout_mean'] = ward_turnout_count['primary_ward_turnout_mean'].round(4)
+merged_results = merged_results.merge(ward_turnout_count, right_on='WARD', left_on='ward')
+merged_results['may_est_total_for'] = round_and_cast(merged_results['primary_ward_turnout_count'] * merged_results['nov_ward_for_share'])
+merged_results['may_est_total_against'] = round_and_cast(merged_results['primary_ward_turnout_count'] * merged_results['nov_ward_against_share'])
+merged_results['may_est_percent_for'] = (merged_results['may_est_total_for'] / merged_results['primary_ward_turnout_count']).round(4)
+merged_results['may_est_percent_against'] = (merged_results['may_est_total_against'] / merged_results['primary_ward_turnout_count']).round(4)
+merged_results['better_than_nov'] = merged_results['nov_ward_for_share'] < merged_results['may_est_percent_for']
+merged_results['winning_ward'] = merged_results['may_est_percent_for'] >= .5
+
+X = m_data[list(set(ml_cat.category_features + ml_cat.interaction_features + ml_cat.numerical_features))]
+y_turnout = m_data["VOTED_NOV_LEVY"]
+y_vote = m_data["nov_for_share"]
+y_pseudo = m_data['nov_for'] / m_data['total']
+preprocessor = ColumnTransformer(
+            transformers=[
+                ("cat", OneHotEncoder(drop="first", sparse_output=False), ml_cat.category_features),
+                ("high_card", TargetEncoder(), ml_cat.high_cardinality_features),
+                ("num", StandardScaler(), ml_cat.numerical_features),
+                ("interaction", TargetEncoder(), ml_cat.interaction_features),
+            ]
+        )
+
+X_encoded = preprocessor.fit_transform(X, y_turnout)
+feature_names = preprocessor.get_feature_names_out()
+feature_df = pd.DataFrame(X_encoded, columns=feature_names, index=m_data.index)
+
+# Split data for turnout model (all individuals)
+X_train_turnout, X_test_turnout, y_turnout_train, y_turnout_test = train_test_split(
+    X_encoded, y_turnout, test_size=0.2, random_state=42
+)
+
+# Filter voters for vote preference model
+voters = m_data[m_data["VOTED_NOV_LEVY"] == 1].index
+X_voters = X_encoded[voters]
+y_vote_voters = y_vote[voters]
+
+# Split voter data for vote preference
+X_train_vote, X_test_vote, y_vote_train, y_vote_test = train_test_split(
+    X_voters, y_vote_voters, test_size=0.2, random_state=42
+)
+
+# Train turnout model (LogisticRegression) on all individuals
+turnout_model = LogisticRegression(random_state=42, max_iter=1000)
+turnout_model.fit(X_train_turnout, y_turnout_train)
+
+# Train vote preference model (LinearRegression) on voters
+vote_model = LinearRegression(fit_intercept=True)
+vote_model.fit(X_train_vote, y_vote_train)
+
+# Predict for all individuals
+turnout_prob = turnout_model.predict_proba(X_encoded)[:, 1]
+P_for = vote_model.predict(X_encoded)
+m_data["turnout_prob"] = turnout_prob
+m_data["P_for"] = np.clip(P_for, 0, 1)
+
+# Filter for November voters
+november_set = m_data[m_data['VOTED_NOV_LEVY'] == 1]
+
+# First, calculate the actual ward and precinct level results
+ward_actual = november_set.groupby('WARD').agg({
+    'nov_for_share': 'mean'
+}).rename(columns={'nov_for_share': 'actual_ward_for_share'})
+
+precinct_actual = november_set.groupby('PRECINCT_NAME').agg({
+    'nov_for_share': 'mean'
+}).rename(columns={'nov_for_share': 'actual_precinct_for_share'})
+
+age_range_actual = november_set.groupby('AGE_RANGE').agg({
+    'nov_for_share': 'mean'
+}).rename(columns={'nov_for_share': 'actual_age_range_for_share'})
+
+# Calculate predicted results at ward and precinct level
+ward_predicted = november_set.groupby('WARD').agg({
+    'P_for': 'mean'
+}).rename(columns={'P_for': 'predicted_ward_for_share'})
+
+precinct_predicted = november_set.groupby('PRECINCT_NAME').agg({
+    'P_for': 'mean'
+}).rename(columns={'P_for': 'predicted_precinct_for_share'})
+
+age_range_predicted = november_set.groupby('AGE_RANGE').agg({
+    'P_for': 'mean'
+}).rename(columns={'P_for': 'predicted_age_range_for_share'})
+
+# Modify the adjust_predictions function
+def adjust_predictions(group):
+    if len(group) == 0 or group["P_for"].isna().all():
+        return group
+    target_for_share = group["nov_for_share"].iloc[0]
+    mean_p_for = group["P_for"].mean()
+    if mean_p_for != 0:
+        # Add a scaling factor to better match November results
+        scaling_factor = 0.46 / mean_p_for  # Using the actual November result
+        group["P_for"] = np.clip(group["P_for"] * scaling_factor, 0, 1)
+    group["P_against"] = 1 - group["P_for"]
+    group["likely_vote"] = np.where(group["P_for"] > 0.5, "for", "against")
+    return group
+
+# Apply the adjusted predictions
+m_data.loc[voters] = m_data.loc[voters].groupby(["ward", "precinct"]).apply(adjust_predictions).reset_index(drop=True)
+
+# Recategorize predictions with tighter margins
+actual_result = 0.4640  # November election result
+std_dev = 0.07  # Standard deviation from November results
+lean_margin = std_dev * 0.75  # Reduced margin to better match actual distribution
+strong_margin = std_dev * 1.5  # Reduced margin to better match actual distribution
+
+# Update the prediction sentiment categorization
+november_set['prediction_sentiment'] = pd.cut(
+    november_set['P_for'],
+    bins=[-np.inf, 
+          actual_result - strong_margin,
+          actual_result - lean_margin,
+          actual_result + lean_margin,
+          actual_result + strong_margin,
+          np.inf],
+    labels=['strongly_against', 'lean_against', 'swing', 'lean_for', 'strongly_for']
+)
 
 
-# preprocessor = ColumnTransformer(
-#             transformers=[
-#                 ("cat", OneHotEncoder(drop="first", sparse_output=False), ml_cat.category_features),
-#                 ("high_card", TargetEncoder(), ml_cat.high_cardinality_features),
-#                 ("num", StandardScaler(), ml_cat.numerical_features),
-#                 ("interaction", TargetEncoder(), ml_cat.interaction_features),
-#             ]
-#         ) 
 
-# # Combine all features
-# X = preprocessor.fit_transform(november_set, november_set['nov_for_share'])
-# feature_names = preprocessor.get_feature_names_out()
+# Identify non-voters who should've voted (turnout_prob > 0.5)
+non_voters = m_data[m_data["VOTED_NOV_LEVY"] == 0].index
+m_data["should_have_voted"] = (m_data["turnout_prob"] > 0.5) & (m_data["VOTED_NOV_LEVY"] == 0)
 
-# y = y_pseudo  # Using the same target variable as before
+# Aggregate turnout and hypothetical voting
+precinct_turnout = m_data.groupby(["ward", "precinct"]).agg(
+    actual_voters=("VOTED_NOV_LEVY", "sum"),
+    estimated_voters=("turnout_prob", "sum"),
+    should_have_voted_count=("should_have_voted", "sum"),
+    hypothetical_for_votes=("P_for", lambda x: (x[m_data["should_have_voted"]]).sum())
+).reset_index()
+precinct_turnout[precinct_turnout.columns[2:]] = precinct_turnout[precinct_turnout.columns[2:]].round().astype(int)
+precinct_turnout['diff'] = precinct_turnout['actual_voters'] - precinct_turnout['estimated_voters']
+# precinct_turnout = precinct_turnout[['ward', 'precinct', 'actual_voters', 'estimated_voters', 'diff', 'should_have_voted_count', 'hypothetical_for_votes']]
+# Compute losses
+train_pred_turnout = turnout_model.predict_proba(X_train_turnout)[:, 1]
+test_pred_turnout = turnout_model.predict_proba(X_test_turnout)[:, 1]
+train_pred_vote = vote_model.predict(X_train_vote)
+test_pred_vote = vote_model.predict(X_test_vote)
+train_loss_turnout = log_loss(y_turnout_train, train_pred_turnout)
+test_loss_turnout = log_loss(y_turnout_test, test_pred_turnout)
+train_mse_vote = mean_squared_error(y_vote_train, train_pred_vote)
+test_mse_vote = mean_squared_error(y_vote_test, test_pred_vote)
 
-# # Split the data
-# X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+# 1. First, let's look at feature importance
+feature_importance = pd.DataFrame({
+    'feature': feature_names,
+    'importance': np.abs(vote_model.coef_)
+})
+feature_importance = feature_importance.sort_values('importance', ascending=False)
 
-# # Create and fit the model
-# model = LinearRegression()
-# model.fit(X_train, y_train)
-
-# # Get predictions
-# y_pred_test = model.predict(X_test)
-
-# feature_importance = pd.DataFrame({
-#     'feature': feature_names,
-#     'against': np.abs(model.coef_[0]),
-#     'swing': np.abs(model.coef_[1]),
-#     'for': np.abs(model.coef_[2])
-# })
-# feature_importance['overall_importance'] = feature_importance[['against', 'swing', 'for']].mean(axis=1)
-# feature_importance = feature_importance.sort_values('overall_importance', ascending=False)
-
-# # Now plot the results
-# plot_regression_results(y_test, y_pred_test, 'Linear Regression')
-# plot_feature_importance(model, feature_names)
-
-# all_predictions = model.predict(X)
-
-# november_set['prediction_for_share'] = all_predictions
-# november_set['prediction_residual'] = y_pseudo - all_predictions
-
-# # Create KDE plot for prediction distributions
+# Plot feature importance
 # plt.figure(figsize=(12, 6))
-# sns.kdeplot(data=november_set['prediction_for_share'], label='Prediction Share', alpha=0.7)
-
-# actual_result = 0.4640  # November election result
-# std_dev = 0.07  # Standard deviation from November results
-# lean_margin = std_dev  # 1 standard deviation for lean (±7%)
-# strong_margin = std_dev * 2  # 2 standard deviations for strong (±14%)
-
-# # Add vertical line for actual result
-# plt.axvline(x=actual_result, color='red', linestyle='-', alpha=0.8, label='Actual November Result (46.40%)')
-
-# # Add threshold lines based on margins from actual result
-# plt.axvline(x=actual_result - strong_margin, color='gray', linestyle='--', alpha=0.5)
-# plt.axvline(x=actual_result - lean_margin, color='gray', linestyle='--', alpha=0.5)
-# plt.axvline(x=actual_result + lean_margin, color='gray', linestyle='--', alpha=0.5)
-# plt.axvline(x=actual_result + strong_margin, color='gray', linestyle='--', alpha=0.5)
-
-# # Add labels
-# plt.text(actual_result - strong_margin, plt.ylim()[1], f'\nStrongly Against\n(<{(actual_result-strong_margin)*100:.1f}%)', rotation=90, ha='right')
-# plt.text(actual_result - lean_margin, plt.ylim()[1], f'\nLean Against\n(<{(actual_result-lean_margin)*100:.1f}%)', rotation=90, ha='right')
-# plt.text(actual_result + lean_margin, plt.ylim()[1], f'\nLean For\n(>{(actual_result+lean_margin)*100:.1f}%)', rotation=90, ha='right')
-# plt.text(actual_result + strong_margin, plt.ylim()[1], f'\nStrongly For\n(>{(actual_result+strong_margin)*100:.1f}%)', rotation=90, ha='right')
-
-# plt.title('Distribution of Prediction Scores vs Actual November Result (±1σ and ±2σ)')
-# plt.xlabel('Prediction Score')
-# plt.ylabel('Density')
-# plt.legend()
+# sns.barplot(data=feature_importance.head(20), x='importance', y='feature')
+# plt.title('Top 20 Most Important Features')
 # plt.tight_layout()
 # plt.show()
 
-# # Recategorize predictions based on actual result
-# november_set['prediction_sentiment'] = pd.cut(
-#     november_set['prediction_for_share'],
-#     bins=[-np.inf, actual_result - strong_margin, actual_result - lean_margin, actual_result + lean_margin, actual_result + strong_margin, np.inf],
-#     labels=['strongly_against', 'lean_against', 'swing', 'lean_for', 'strongly_for']
+
+# 4. Let's analyze the relationship between age and other important features
+# First, get the top 5 most important features
+top_features = feature_importance.head(5)['feature'].tolist()
+
+# # Create a pairplot for these features
+# plt.figure(figsize=(15, 10))
+# sns.pairplot(
+#     november_set[['AGE_RANGE', 'P_for']],
+#     hue='AGE_RANGE',
+#     diag_kind='kde'
 # )
+# plt.suptitle('Relationship Between Age and Predictions', y=1.02)
+# plt.show()
 
-# # First, calculate the actual ward and precinct level results
-# ward_actual = november_set.groupby('WARD').agg({
-#     'nov_for_share': 'mean'
-# }).rename(columns={'nov_for_share': 'actual_ward_for_share'})
+# # 5. Let's look at the actual coefficients for age-related features
+# age_features = feature_importance[feature_importance['feature'].str.contains('AGE')]
+# print("\nAge-related feature coefficients:")
+# print(age_features)
 
-# precinct_actual = november_set.groupby('PRECINCT_NAME').agg({
-#     'nov_for_share': 'mean'
-# }).rename(columns={'nov_for_share': 'actual_precinct_for_share'})
+# 6. Create a heatmap of predictions by age and ward
+age_ward_predictions = pd.pivot_table(
+    november_set,
+    values='P_for',
+    index='AGE_RANGE',
+    columns='WARD',
+    aggfunc='mean'
+)
 
-# age_range_actual = november_set.groupby('AGE_RANGE').agg({
-#     'nov_for_share': 'mean'
-# }).rename(columns={'nov_for_share': 'actual_age_range_for_share'})
+age_precinct_predictions = pd.pivot_table(
+    november_set,
+    values='P_for',
+    index='AGE_RANGE',
+    columns='PRECINCT_NAME',
+    aggfunc='mean'
+)
+# plt.figure(figsize=(12, 8))
+# sns.heatmap(age_ward_predictions, annot=True, cmap='RdYlBu', center=0.5)
+# plt.title('Average Predictions by Age Range and Ward')
+# plt.tight_layout()
+# plt.show()
 
-# # Calculate predicted results at ward and precinct level
-# ward_predicted = november_set.groupby('WARD').agg({
-#     'prediction_for_share': 'mean'
-# }).rename(columns={'prediction_for_share': 'predicted_ward_for_share'})
+# Additional Analysis
+def create_crosstab(index_cols: list[str] | str, columns: list[str] | str, df: pd.DataFrame):
+    if isinstance(index_cols, str):
+        index_cols = [index_cols]
+    else:
+        index_cols = [df[x] for x in index_cols]
+    if isinstance(columns, str):
+        _columns = [columns]
+    else:
+        _columns = [df[x] for x in columns]
+    return pd.crosstab(
+        index=index_cols,
+        columns=_columns,
+        margins=True,
+        normalize='index'
+    ).round(4)
 
-# precinct_predicted = november_set.groupby('PRECINCT_NAME').agg({
-#     'prediction_for_share': 'mean'
-# }).rename(columns={'prediction_for_share': 'predicted_precinct_for_share'})
+city_age_range_crostab = create_crosstab(
+    index_cols=['WARD'],
+    columns=['AGE_RANGE'],
+    df=m_data
+)
 
-# age_range_predicted = november_set.groupby('AGE_RANGE').agg({
-#     'prediction_for_share': 'mean'
-# }).rename(columns={'prediction_for_share': 'predicted_age_range_for_share'})
+may_age_range_crostab = create_crosstab(
+    index_cols=['WARD'],
+    columns=['AGE_RANGE'],
+    df=may
+)
 
-# # Combine actual and predicted results
-# ward_comparison = pd.merge(ward_actual, ward_predicted, left_index=True, right_index=True)
-# ward_comparison['difference'] = ward_comparison['predicted_ward_for_share'] - ward_comparison['actual_ward_for_share']
+may_sentiment = november_set[november_set['VOTED_MAY_LEVY'] == 1]
+may_prediction_setiment = pd.crosstab(
+    index=may_sentiment['AGE_RANGE'],
+    columns=may_sentiment['prediction_sentiment'],
+    margins=True,
+    normalize='index'
+).round(4)
+# m_data[m_data['VOTED_NOV_LEVY'] == True]['AGE_RANGE'].value_counts(normalize=True).sort_index()
+# m_data[m_data['VOTED_MAY_LEVY'] == True]['AGE_RANGE'].value_counts(normalize=True).sort_index().plot(kind='pie', autopct='%1.1f%%')
 
-# precinct_comparison = pd.merge(precinct_actual, precinct_predicted, left_index=True, right_index=True)
-# precinct_comparison['difference'] = precinct_comparison['predicted_precinct_for_share'] - precinct_comparison['actual_precinct_for_share']
+# Analyze 65+ voter patterns
+# senior_voters = november_set[november_set['AGE_RANGE'].isin(['65-74', '75+'])]
 
-# age_range_comparison = pd.merge(age_range_actual, age_range_predicted, left_index=True, right_index=True)
-# age_range_comparison['difference'] = age_range_comparison['predicted_age_range_for_share'] - age_range_comparison['actual_age_range_for_share']
+# # Calculate November voting patterns for seniors
+# senior_vote_analysis = senior_voters.groupby('AGE_RANGE').agg({
+#     'nov_for_share': ['mean', 'count'],
+#     'P_for': ['mean', 'count']
+# }).round(4)
 
-# # Print comparisons
-# print("\nWard-Level Comparison:")
+# print("\nNovember Voting Patterns for 65+ Voters:")
 # print("=" * 50)
-# print(ward_comparison.sort_values('difference', ascending=False).round(4))
+# print(senior_vote_analysis)
 
-# print("\nPrecinct-Level Comparison:")
+# # Calculate ward-level patterns for seniors
+# senior_ward_analysis = senior_voters.groupby(['WARD', 'AGE_RANGE']).agg({
+#     'nov_for_share': ['mean', 'count'],
+#     'P_for': ['mean', 'count']
+# }).round(4)
+
+# print("\nWard-Level Analysis for 65+ Voters:")
 # print("=" * 50)
-# print(precinct_comparison.sort_values('difference', ascending=False).round(4))
+# print(senior_ward_analysis)
 
-# print("\nAge Range-Level Comparison:")
+# # Calculate the overall impact of senior voters
+# total_nov_votes = november_set['VOTED_NOV_LEVY'].sum()
+# senior_nov_votes = senior_voters['VOTED_NOV_LEVY'].sum()
+# senior_for_votes = (senior_voters['nov_for_share'] * senior_voters['VOTED_NOV_LEVY']).sum()
+
+# print("\nSenior Voter Impact Analysis:")
 # print("=" * 50)
-# print(age_range_comparison.sort_values('difference', ascending=False).round(4))
+# print(f"Total November Votes: {total_nov_votes}")
+# print(f"Senior November Votes: {senior_nov_votes}")
+# print(f"Senior Vote Share: {(senior_nov_votes/total_nov_votes*100):.1f}%")
+# print(f"Senior For Votes: {senior_for_votes:.0f}")
+# print(f"Senior For Share: {(senior_for_votes/senior_nov_votes*100):.1f}%")
 
-# # Calculate summary statistics
-# print("\nSummary Statistics:")
+# # Visualize senior voting patterns
+# plt.figure(figsize=(12, 6))
+# senior_voters.groupby('AGE_RANGE')['nov_for_share'].mean().plot(kind='bar')
+# plt.axhline(y=0.4640, color='red', linestyle='--', label='Overall November Result (46.40%)')
+# plt.title('November For Share by Senior Age Group')
+# plt.ylabel('For Share')
+# plt.xlabel('Age Range')
+# plt.legend()
+# plt.show()
+
+# # Compare senior voting patterns with May early voting
+# may_seniors = m_data[m_data['VOTED_MAY_LEVY'] == 1]
+# may_senior_share = may_seniors[may_seniors['AGE_RANGE'].isin(['65-74', '75+'])].shape[0] / may_seniors.shape[0]
+
+# print("\nMay vs November Senior Voter Comparison:")
 # print("=" * 50)
-# print("\nWard-Level Differences:")
-# print(f"Mean Absolute Error: {abs(ward_comparison['difference']).mean():.4f}")
-# print(f"Max Overprediction: {ward_comparison['difference'].max():.4f}")
-# print(f"Max Underprediction: {ward_comparison['difference'].min():.4f}")
+# print(f"May Early Vote Senior Share: {may_senior_share*100:.1f}%")
+# print(f"November Senior Share: {(senior_nov_votes/total_nov_votes*100):.1f}%")
 
-# print("\nPrecinct-Level Differences:")
-# print(f"Mean Absolute Error: {abs(precinct_comparison['difference']).mean():.4f}")
-# print(f"Max Overprediction: {precinct_comparison['difference'].max():.4f}")
-# print(f"Max Underprediction: {precinct_comparison['difference'].min():.4f}")
-
-# print("\nAge Range-Level Differences:")
-# print(f"Mean Absolute Error: {abs(age_range_comparison['difference']).mean():.4f}")
-# print(f"Max Overprediction: {age_range_comparison['difference'].max():.4f}")
-# print(f"Max Underprediction: {age_range_comparison['difference'].min():.4f}")
-
-# november_results = november_set[november_set['VOTED_NOV_LEVY'] == True].groupby('prediction_sentiment')['VOTED_NOV_LEVY'].sum().reset_index()
-# november_results['percent'] = (november_results['VOTED_NOV_LEVY'] / m_data['VOTED_NOV_LEVY'].sum()).round(4)
-# november_merge = november_set[['WARD', 'PRECINCT_NAME', 'AGE_RANGE','prediction_sentiment']].drop_duplicates()
-
-# november_quant = november_set['prediction_for_share'].quantile([0.15, 0.4, 0.6, 0.85])
-
-# #
-# # may_voters = m_data[m_data['VOTED_MAY_LEVY'] == True]
-# # may_results['percent'] = (may_results['VOTED_MAY_LEVY'] / m_data['VOTED_MAY_LEVY'].sum()).round(4)
-
-# def calculate_votes_by_age_precinct(data: pd.DataFrame) -> pd.DataFrame:
-#     """
-#     Calculate total votes by age range and precinct, including for/against percentages.
-    
-#     Args:
-#         data: DataFrame containing voter data with AGE_RANGE, PRECINCT_NAME, and vote columns
-        
-#     Returns:
-#         DataFrame with total votes and percentages by age and precinct
-#     """
-#     # Group by age range and precinct
-#     age_precinct_stats = data.groupby(['AGE_RANGE', 'PRECINCT_NAME']).agg({
-#         'VOTED_NOV_LEVY': 'sum',  # Total votes
-#         'nov_for_share': 'mean',   # Average for percentage
-#         'nov_against_share': 'mean'  # Average against percentage
-#     }).reset_index()
-    
-#     # Calculate total registered voters by age and precinct
-#     total_voters = data.groupby(['AGE_RANGE', 'PRECINCT_NAME']).size().reset_index(name='total_registered')
-    
-#     # Merge the statistics
-#     results = age_precinct_stats.merge(total_voters, on=['AGE_RANGE', 'PRECINCT_NAME'])
-    
-#     # Calculate percentages
-#     results['turnout_rate'] = (results['VOTED_NOV_LEVY'] / results['total_registered']).round(4)
-#     results['for_votes'] = (results['VOTED_NOV_LEVY'] * results['nov_for_share']).round(0)
-#     results['against_votes'] = (results['VOTED_NOV_LEVY'] * results['nov_against_share']).round(0)
-    
-#     return results
-
-# # Calculate and display the results
-# votes_by_age_precinct = calculate_votes_by_age_precinct(m_data)
-# print("\nVotes by Age and Precinct:")
+# # Senior Voter Analysis
+# print("\nSenior Voter Analysis (65+):")
 # print("=" * 50)
-# print(votes_by_age_precinct.to_markdown(floatfmt='.2%'))
 
-# may_vote_predictions = m_data[m_data['VOTED_MAY_LEVY'] == True]
-# may_vote_prediction_counts = pd.crosstab(
-#     may_vote_predictions['PRECINCT_NAME'],
-#     may_vote_predictions['prediction_sentiment'],
-#     margins=True
-# )
+# # Filter for senior voters
+# senior_voters = november_set[november_set['AGE_RANGE'].isin(['65-74', '75+'])]
 
-# may_ward7_by_age = m_data.groupby('PRECINCT_NAME').agg({
-#     'VOTED_MAY_LEVY': 'sum',
-#     'VOTED_NOV_LEVY': 'sum',
-#     'SOS_VOTERID': 'count',
-#     'nov_for_share': 'mean',
-#     'nov_against_share': 'mean',
-#     'primary_precinct_turnout_mean': 'mean'
-# }).reset_index().rename(columns={'VOTED_MAY_LEVY': 'may_total_voted', 'VOTED_NOV_LEVY': 'nov_total_voted', 'SOS_VOTERID': 'total_registered_voters'}).round(4)
-# may_ward7_by_age['may_turnout_percent'] = (may_ward7_by_age['may_total_voted'] / may_ward7_by_age['total_registered_voters']).round(4)
-# may_ward7_by_age['may_for_share'] = (may_ward7_by_age['may_total_voted'] * may_ward7_by_age['nov_for_share']).round()
-# may_ward7_by_age['estimated_may_turnout'] = (may_ward7_by_age['total_registered_voters'] * may_ward7_by_age['primary_precinct_turnout_mean']).round()
-# may_ward7_by_age['may_votes_vs_est_turnout'] = (may_ward7_by_age['may_total_voted'] / may_ward7_by_age['estimated_may_turnout']).round(4)
-# may_ward7_by_age = may_ward7_by_age.drop_duplicates()
-# print(may_ward7_by_age.to_markdown(index=False))
-# may_ward7_by_age.to_csv(FilePaths.PREDICTION_FOLDER / 'may_precinct_by_age.csv', index=False)
+# # Calculate November voting patterns
+# total_nov_votes = november_set['VOTED_NOV_LEVY'].sum()
+# senior_nov_votes = senior_voters['VOTED_NOV_LEVY'].sum()
+# senior_for_votes = (senior_voters['nov_for_share'] * senior_voters['VOTED_NOV_LEVY']).sum()
 
+# print(f"Total November Votes: {total_nov_votes}")
+# print(f"Senior November Votes: {senior_nov_votes}")
+# print(f"Senior Vote Share: {(senior_nov_votes/total_nov_votes*100):.1f}%")
+# print(f"Senior For Votes: {senior_for_votes:.0f}")
+# print(f"Senior For Share: {(senior_for_votes/senior_nov_votes*100):.1f}%")
 
-# november_voters = m_data[m_data['VOTED_NOV_LEVY'] == True]
+# # Compare with May early voting
+# may_seniors = m_data[m_data['VOTED_MAY_LEVY'] == 1]
+# may_senior_share = may_seniors[may_seniors['AGE_RANGE'].isin(['65-74', '75+'])].shape[0] / may_seniors.shape[0]
 
-# # Turnout by ward and age
-# turnout_ward = pd.crosstab(
-#     [m_data['AGE_RANGE'], m_data['WARD']],
-#     m_data['VOTED_NOV_LEVY'],
-#     normalize='index'
-# )[True].unstack()
+# print("\nMay vs November Senior Voter Comparison:")
+# print(f"May Early Vote Senior Share: {may_senior_share*100:.1f}%")
+# print(f"November Senior Share: {(senior_nov_votes/total_nov_votes*100):.1f}%")
 
-# # Turnout by precinct and age
-# turnout_precinct = pd.crosstab(
-#     [m_data['AGE_RANGE'], m_data['PRECINCT_NAME']],
-#     m_data['VOTED_NOV_LEVY'],
-#     normalize='index'
-# )[True].unstack()
+# # Ward-level analysis for seniors
+# senior_ward_analysis = senior_voters.groupby(['WARD', 'AGE_RANGE']).agg({
+#     'nov_for_share': ['mean', 'count'],
+#     'P_for': ['mean', 'count']
+# }).round(4)
 
-# for voter_idx, voter in m_data.iterrows():
-#     ward = voter['WARD']
-#     age_range = voter['AGE_RANGE']
-#     precinct = voter['PRECINCT_NAME']
-    
-#     # Add city-wide context
-#     m_data.loc[voter_idx, 'age_ward_city_share'] = age_ward_city.loc[age_range, ward]
-#     m_data.loc[voter_idx, 'age_precinct_city_share'] = age_precinct_city.loc[age_range, precinct]
-    
-#     # Add local demographic context
-#     m_data.loc[voter_idx, 'age_share_in_ward'] = age_ward_within.loc[age_range, ward]
-#     m_data.loc[voter_idx, 'age_share_in_precinct'] = age_precinct_within.loc[age_range, precinct]
-    
-#     # Add historical turnout rates
-#     m_data.loc[voter_idx, 'age_ward_turnout_rate'] = turnout_ward.loc[age_range, ward]
-
-
-
-# m_data = pd.concat([m_data, pd.get_dummies(m_data['PARTY_AFFILIATION'], prefix='PARTY')], axis=1)
-
-# m_data['AGE_RANGE_CAT'] = pd.Categorical(m_data['AGE_RANGE'], categories=vf_config.AGE_RANGE_SORTED, ordered=True)
-# m_data['AGE_WARD'] = m_data['AGE_RANGE'].astype(str) + '-' + m_data['WARD'].astype(str)
-# m_data['AGE_PRECINCT'] = m_data['AGE_RANGE'].astype(str) + '-' + m_data['PRECINCT_NAME'].astype(str)
-
-
-
-
-# linear_model = FindlayPredictionModel(voterfile)
-# decision_tree = FindlayDecisionTree(voterfile).run()
-# decision_tree.run_sentiment_analysis()
-
-# print("Running Monte Carlo simulation...")
-# # Run Monte Carlo simulation with fewer iterations for testing
-# mc_config = MonteCarloConfig(
-#     n_simulations=100,  # Reduced number of simulations for testing
-#     turnout_std=0.15,    # Adjust turnout variation
-#     sentiment_std=0.2    # Adjust sentiment variation
-# )
-# mc_simulation = MonteCarloVoterSimulation(linear_model.data.model_data, mc_config)
-# mc_simulation.run_simulation()
-# mc_simulation.plot_distributions()
-# mc_simulation.print_summary_statistics()
-# mc_simulation_results = mc_simulation.get_voter_predictions()
-
-# print("Generating prediction plots...")
-
-# Prediction Plots
-
-# all_voters_by_age = vote_prediction_by_age(linear_model.data.model_data, linear_model.data.config)
-# november_voters = voterfile.model_data[voterfile.model_data[vf_cols.VOTED_NOV_LEVY] == 1]
-# november_voters_by_age = vote_prediction_by_age(november_voters, linear_model.data.config)
-# november_voters_by_ward = vote_prediction_by_ward(november_voters, linear_model.data.config)
-# november_voters_by_precinct = vote_prediction_by_precinct(november_voters, linear_model.data.config)
-# november_voter_count_by_age = november_voters.groupby([vf_cols.AGE_RANGE])[vf_cols.VOTER_ID].count().reset_index().rename(columns={vf_cols.VOTER_ID: 'VOTER_COUNT'})
-# november_voter_count_by_age['PERCENT'] = (november_voter_count_by_age['VOTER_COUNT'] / november_voter_count_by_age['VOTER_COUNT'].sum() * 100).round(2)
-
-# may_voters = voterfile.model_data[voterfile.model_data[vf_cols.VOTED_MAY_LEVY] == 1]
-# may_voters_by_age = vote_prediction_by_age(may_voters, linear_model.data.config)
-# may_voters_by_ward = vote_prediction_by_ward(may_voters, linear_model.data.config)
-# may_voters_by_precinct = vote_prediction_by_precinct(may_voters, linear_model.data.config)
-# may_voter_count_by_age = may_voters.groupby([vf_cols.AGE_RANGE])[vf_cols.VOTER_ID].count().reset_index().rename(columns={vf_cols.VOTER_ID: 'VOTER_COUNT'})
-# may_voter_count_by_age['PERCENT'] = (may_voter_count_by_age['VOTER_COUNT'] / may_voter_count_by_age['VOTER_COUNT'].sum() * 100).round(2)
-
-# ic(november_voters_by_ward.sum())
-
-# plot_vote_share(november_voters_by_age, 'AGE_RANGE', linear_model.config.PREDICTION_TOTAL_COLS, 'Turnout: November Voters by Age')
-# plot_vote_share(november_voters_by_ward, 'WARD', linear_model.config.PREDICTION_TOTAL_COLS, 'Turnout: November Voters by Ward')
-# plot_vote_share(may_voters_by_age, 'AGE_RANGE', linear_model.config.PREDICTION_TOTAL_COLS, 'Turnout: May Voters by Age')
-# plot_vote_share(may_voters_by_ward, 'WARD', linear_model.config.PREDICTION_TOTAL_COLS, 'Turnout: May Voters by Ward')
-
-# plot_vote_share(november_voters_by_age, 'AGE_RANGE', linear_model.config.PREDICTION_LEVEL_COLS, 'Linear Model: November Voters by Age')
-# plot_vote_share(november_voters_by_ward, 'WARD', linear_model.config.PREDICTION_LEVEL_COLS, 'Linear Model: November Voters by Ward')
-# plot_vote_share(may_voters_by_age, 'AGE_RANGE', linear_model.config.PREDICTION_LEVEL_COLS, 'Linear Model: May Voters by Age')
-# plot_vote_share(may_voters_by_ward, 'WARD', linear_model.config.PREDICTION_LEVEL_COLS, 'Linear Model: May Voters by Ward')
-
-
-# nov_by_level = november_voters.groupby('vote_prediction')[vf_cols.VOTER_ID].count()
-# nov_by_generic = november_voters.groupby('generic_vote_prediction')[vf_cols.VOTER_ID].count()
-# nov_by_semi_generic = november_voters.groupby('semi_generic_prediction')[vf_cols.VOTER_ID].count()
-#
-# may_by_level = may_voters.groupby('vote_prediction')[vf_cols.VOTER_ID].count()
-# may_by_generic = may_voters.groupby('generic_vote_prediction')[vf_cols.VOTER_ID].count()
-# may_by_semi_generic = may_voters.groupby('semi_generic_prediction')[vf_cols.VOTER_ID].count()
-#
-# plot_pie_chart(nov_by_level, 'Linear Model: November Voters by Vote Prediction')
-# plot_pie_chart(nov_by_semi_generic, 'Linear Model: November Voters by Semi-Generic Vote Prediction')
-# plot_pie_chart(nov_by_generic, 'Linear Model: November Voters by Generic Vote Prediction')
-#
-# plot_pie_chart(may_by_level, 'Linear Model: May Voters by Vote Prediction')
-# plot_pie_chart(may_by_semi_generic, 'Linear Model: May Voters by Semi-Generic Vote Prediction')
-# plot_pie_chart(may_by_generic, 'Linear Model: May Voters by Generic Vote Prediction')
-
-
-# # Exports
-
-# november_voters_by_ward.to_csv(FilePaths.PREDICTION_FOLDER / 'linear_model_november_voters_by_ward.csv', index=False)
-# may_voters_by_ward.to_csv(FilePaths.PREDICTION_FOLDER / 'linear_model_may_voters_by_ward.csv', index=False)
-# november_voters_by_age.to_csv(FilePaths.PREDICTION_FOLDER / 'linear_model_november_voters_by_age.csv', index=False)
-# may_voters_by_age.to_csv(FilePaths.PREDICTION_FOLDER / 'linear_model_may_voters_by_age.csv', index=False)
-# november_voters_by_precinct.to_csv(FilePaths.PREDICTION_FOLDER / 'linear_model_november_voters_by_precinct.csv', index=False)
-# may_voters_by_precinct.to_csv(FilePaths.PREDICTION_FOLDER / 'linear_model_may_voters_by_precinct.csv', index=False)
+# print("\nWard-Level Analysis for 65+ Voters:")
+# print(senior_ward_analysis)
