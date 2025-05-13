@@ -8,6 +8,8 @@ authors = [
 ]
 requires-python = ">=3.12.8"
 dependencies = [
+    "category-encoders>=2.8.1",
+    "duckdb>=1.2.2",
     "icecream>=2.1.4",
     "ipynb>=0.5.1",
     "marimo[recommended]>=0.12.8",
@@ -22,6 +24,8 @@ dependencies = [
     "selenium>=4.31.0",
     "sqlmodel>=0.0.24",
     "statsmodels>=0.14.4",
+    "tabulate>=0.9.0",
+    "tensorflow>=2.19.0",
 ]
 
 [project.scripts]
