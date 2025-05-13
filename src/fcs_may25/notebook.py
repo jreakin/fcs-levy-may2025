@@ -111,8 +111,8 @@ def _(mo):
 @app.cell
 def _(create_pie_chart, m, new_subplot, plt):
     fig0, (ax01, ax02) = new_subplot()
-    create_pie_chart(m.m_data['AGE_RANGE'], title='All Voters', ax=ax01)
-    m.m_data['AGE_RANGE'].value_counts().sort_index().plot(
+    create_pie_chart(m.pe.m_data['AGE_RANGE'], title='All Voters', ax=ax01)
+    m.pe.m_data['AGE_RANGE'].value_counts().sort_index().plot(
         kind='bar', 
         ylabel='Count',
         xlabel='Age Range',
@@ -131,8 +131,8 @@ def _(mo):
 @app.cell
 def _(m, mo, pd):
     age_range_ct = pd.crosstab(
-        index=m.m_data['WARD'].str.title(),
-        columns=m.m_data['AGE_RANGE'],
+        index=m.pe.m_data['WARD'].str.title(),
+        columns=m.pe.m_data['AGE_RANGE'],
         margins=True,
         normalize='index'
     ).round(4)
@@ -159,8 +159,8 @@ def _(mo):
 
 @app.cell
 def _(m, plt):
-    vote_methods = m.voterfile.current_votes
-    merge_methods = vote_methods.merge(m.m_data[['SOS_VOTERID', 'AGE_RANGE', 'WARD']], right_on='SOS_VOTERID', left_on='STATE ID#')
+    vote_methods = m.pe.voterfile.current_votes
+    merge_methods = vote_methods.merge(m.pe.m_data[['SOS_VOTERID', 'AGE_RANGE', 'WARD']], right_on='SOS_VOTERID', left_on='STATE ID#')
 
     city_by_method = (
         merge_methods['Vote Method']
@@ -235,15 +235,15 @@ def _(mo):
 def _(create_pie_chart, m, new_subplot, plt):
     fig1, (ax1, ax2) = new_subplot()
 
-    create_pie_chart(m.november['AGE_RANGE'], title='November', ax=ax1)
-    create_pie_chart(m.may['AGE_RANGE'], title='May', ax=ax2)
+    create_pie_chart(m.pe.november['AGE_RANGE'], title='November', ax=ax1)
+    create_pie_chart(m.pe.may['AGE_RANGE'], title='May', ax=ax2)
     plt.gca()
     return ax1, ax2, fig1
 
 
 @app.cell
 def _(m, plt):
-    m.merge_ages.rename(
+    m.pe.merge_ages.rename(
         columns={
             'nov_count': 'November', 
             'may_count': 'May'}).plot(
@@ -282,8 +282,8 @@ def _(mo):
 def _(create_pie_chart, m, new_subplot, plt):
     fig2, (ax3, ax4) = new_subplot()
 
-    create_pie_chart(m.november['WARD'].apply(lambda x: x.title()), title='November', ax=ax3)
-    create_pie_chart(m.may['WARD'].apply(lambda x: x.title()), title='May', ax=ax4)
+    create_pie_chart(m.pe.november['WARD'].apply(lambda x: x.title()), title='November', ax=ax3)
+    create_pie_chart(m.pe.may['WARD'].apply(lambda x: x.title()), title='May', ax=ax4)
     plt.gca()
     return ax3, ax4, fig2
 
@@ -292,7 +292,7 @@ def _(create_pie_chart, m, new_subplot, plt):
 def _(m, new_subplot, nov_may_voters_rename, plt):
     fig, (ax5, ax6) = new_subplot()
 
-    m.merge_by_ward.rename(columns=nov_may_voters_rename).plot(
+    m.pe.merge_by_ward.rename(columns=nov_may_voters_rename).plot(
         kind='bar',
         y=['November', 'May'],
         title='Nov vs. May Turnout By Ward',
@@ -301,6 +301,155 @@ def _(m, new_subplot, nov_may_voters_rename, plt):
     )
     plt.gcf()
     return ax5, ax6, fig
+
+
+@app.cell
+def _(calculate_votes_by_age_precinct, m):
+    votes_by_age_precinct = calculate_votes_by_age_precinct(m.pe.m_data)
+    votes_by_age_precinct['turnout_rate'] = votes_by_age_precinct['turnout_rate'].astype(float).round(4)
+    votes_by_age_precinct[['for_votes', 'against_votes']] = votes_by_age_precinct[['for_votes', 'against_votes']].round().astype(int)
+    votes_by_age_precinct[['for_votes', 'against_votes']].rename(
+        columns={
+            'for_votes': 'For', 
+            'against_votes': 'Against'}
+    ).sum().plot(
+        kind='pie', 
+        autopct='%1.1f%%',
+        title='Outcome-Based November Precinct/Ward Results'
+    )
+    return (votes_by_age_precinct,)
+
+
+@app.cell
+def _(m, plt):
+    (
+        m.pe.merged_results
+        .rename(
+            columns={
+                'nov_ward_for_share': 'November', 
+                'may_est_percent_for': 'May Predicted'
+            })
+        .plot(
+            kind='bar',
+            y=['November', 'May Predicted'],
+            x='WARD',
+            title='"For" Percentage by Ward Based on Estimated Turnout'
+        )
+    )
+    plt.gcf()
+    return
+
+
+@app.cell
+def _(pd):
+    def calculate_votes_by_age_precinct(data: pd.DataFrame) -> pd.DataFrame:
+        """
+        Calculate total votes by age range and precinct, including for/against percentages.
+
+        Args:
+            data: DataFrame containing voter data with AGE_RANGE, PRECINCT_NAME, and vote columns
+
+        Returns:
+            DataFrame with total votes and percentages by age and precinct
+        """
+        # Group by age range and precinct
+        age_precinct_stats = data.groupby(['AGE_RANGE', 'PRECINCT_NAME']).agg({
+            'VOTED_NOV_LEVY': 'sum',  # Total votes
+            'nov_for_share': 'mean',   # Average for percentage
+            'nov_against_share': 'mean'  # Average against percentage
+        }).reset_index()
+
+        # Calculate total registered voters by age and precinct
+        total_voters = data.groupby(['AGE_RANGE', 'PRECINCT_NAME']).size().reset_index(name='total_registered')
+
+        # Merge the statistics
+        results = age_precinct_stats.merge(total_voters, on=['AGE_RANGE', 'PRECINCT_NAME'])
+
+        # Calculate percentages
+        results['turnout_rate'] = (results['VOTED_NOV_LEVY'] / results['total_registered']).round(4)
+        results['for_votes'] = (results['VOTED_NOV_LEVY'] * results['nov_for_share']).round(0)
+        results['against_votes'] = (results['VOTED_NOV_LEVY'] * results['nov_against_share']).round(0)
+
+        return results
+    return (calculate_votes_by_age_precinct,)
+
+
+@app.cell
+def _(m, new_subplot, plt):
+    fig3, (ax7, ax8) = new_subplot()
+    (
+        m.pe.merged_results
+        .rename(
+            columns={
+                'nov_ward_against_count': 'November Against', 
+                'nov_ward_for_count': 'November For'})
+        .plot(
+            kind='bar',
+            y=['November Against', 'November For'],
+            x='WARD',
+            ax=ax7
+        )
+    )
+
+    (
+        m.pe.merged_results
+        .rename(
+            columns={
+                'may_est_total_against': 'May Predicted Against', 
+                'may_est_total_for': 'May Predicted For'})
+        .plot(
+            kind='bar',
+            y=['May Predicted Against', 'May Predicted For'],
+            x='WARD',
+            ax=ax8
+        )
+    )
+    plt.tight_layout()
+    plt.gcf()
+    return ax7, ax8, fig3
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""### <center> November vs. May Based On November Results: By Ward </center>""")
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(
+        r"""
+        <br>
+        ### May Vote Result Predictions Based on Model
+
+        Pro-Tax Levy battle plan for May: 
+
+        - Overall turnout will be half that of November, but the senior citizen army will show up in force. Their turnout rates will approach 30% while the under-35 crowd will barely break 5%.
+        - That means every single 65+ voter could be worth up to SIX young voters in electoral impact.
+        - The model shows the levy is on a knife's edge for passage – every vote will count.
+        - Liberty S and Precinct 2C are the strongest performing areas and need to continue turning out high.
+        - Precinct 6A and Marion N are areas where pro-Levy needs to stop the bleeding.
+
+        In May elections, it's not who supports the levy – it's who actually shows up that determines the outcome.
+        """
+    )
+    return
+
+
+@app.cell
+def _(m, mo):
+    total_votes = (
+        (_for := m.pe.merged_results['may_est_total_for'].sum()) + 
+        (_against := m.pe.merged_results['may_est_total_against'].sum())
+    )
+
+    mo.md(f"""
+    Based on November - **For**: {_for.sum()} ({round(_for / total_votes, 4):.2%})  
+    Based on November - **Against**: {_against.sum()} ({round(_against / total_votes, 4):.2%})
+
+    """
+    )
+    return (total_votes,)
 
 
 @app.cell
@@ -428,8 +577,8 @@ def _(mo):
 
 @app.cell
 def _(m, plt, sns):
-    plt.figure(figsize=(12, 8))
-    sns.heatmap(m.age_ward_predictions, annot=True, cmap='RdYlBu', center=0.5)
+    plt.figure(figsize=(12,6))
+    sns.heatmap(m.age_ward_predictions, annot=True, cmap='RdYlBu', center=m.actual_result)
     plt.title('Average Predictions by Age Range and Ward')
     plt.tight_layout()
     plt.gcf()
@@ -438,161 +587,12 @@ def _(m, plt, sns):
 
 @app.cell
 def _(m, plt, sns):
-    plt.figure(figsize=(24, 12))
-    sns.heatmap(m.age_precinct_predictions, annot=True, cmap='RdYlBu', center=0.5)
+    plt.figure(figsize=(24, 10))
+    sns.heatmap(m.age_precinct_predictions, annot=True, cmap='RdYlBu', center=m.actual_result)
     plt.title('Average Predictions by Age Range and Precinct')
     plt.tight_layout()
     plt.gcf()
     return
-
-
-@app.cell
-def _(pd):
-    def calculate_votes_by_age_precinct(data: pd.DataFrame) -> pd.DataFrame:
-        """
-        Calculate total votes by age range and precinct, including for/against percentages.
-
-        Args:
-            data: DataFrame containing voter data with AGE_RANGE, PRECINCT_NAME, and vote columns
-
-        Returns:
-            DataFrame with total votes and percentages by age and precinct
-        """
-        # Group by age range and precinct
-        age_precinct_stats = data.groupby(['AGE_RANGE', 'PRECINCT_NAME']).agg({
-            'VOTED_NOV_LEVY': 'sum',  # Total votes
-            'nov_for_share': 'mean',   # Average for percentage
-            'nov_against_share': 'mean'  # Average against percentage
-        }).reset_index()
-
-        # Calculate total registered voters by age and precinct
-        total_voters = data.groupby(['AGE_RANGE', 'PRECINCT_NAME']).size().reset_index(name='total_registered')
-
-        # Merge the statistics
-        results = age_precinct_stats.merge(total_voters, on=['AGE_RANGE', 'PRECINCT_NAME'])
-
-        # Calculate percentages
-        results['turnout_rate'] = (results['VOTED_NOV_LEVY'] / results['total_registered']).round(4)
-        results['for_votes'] = (results['VOTED_NOV_LEVY'] * results['nov_for_share']).round(0)
-        results['against_votes'] = (results['VOTED_NOV_LEVY'] * results['nov_against_share']).round(0)
-
-        return results
-    return (calculate_votes_by_age_precinct,)
-
-
-@app.cell
-def _(mo):
-    mo.md(
-        r"""
-        <br>
-        ### May Vote Result Predictions Based on Model
-
-        Pro-Tax Levy battle plan for May: 
-
-        - Overall turnout will be half that of November, but the senior citizen army will show up in force. Their turnout rates will approach 30% while the under-35 crowd will barely break 5%.
-        - That means every single 65+ voter could be worth up to SIX young voters in electoral impact.
-        - The model shows the levy is on a knife's edge for passage – every vote will count.
-        - Liberty S and Precinct 2C are the strongest performing areas and need to continue turning out high.
-        - Precinct 6A and Marion N are areas where pro-Levy needs to stop the bleeding.
-
-        In May elections, it's not who supports the levy – it's who actually shows up that determines the outcome.
-        """
-    )
-    return
-
-
-@app.cell
-def _(calculate_votes_by_age_precinct, m):
-    votes_by_age_precinct = calculate_votes_by_age_precinct(m.m_data)
-    votes_by_age_precinct['turnout_rate'] = votes_by_age_precinct['turnout_rate'].astype(float).round(4)
-    votes_by_age_precinct[['for_votes', 'against_votes']] = votes_by_age_precinct[['for_votes', 'against_votes']].round().astype(int)
-    votes_by_age_precinct[['for_votes', 'against_votes']].rename(
-        columns={
-            'for_votes': 'For', 
-            'against_votes': 'Against'}
-    ).sum().plot(
-        kind='pie', 
-        autopct='%1.1f%%',
-        title='Outcome Based November Precinct/Ward Results'
-    )
-    return (votes_by_age_precinct,)
-
-
-@app.cell
-def _(m, plt):
-    (
-        m.merged_results
-        .rename(
-            columns={
-                'nov_ward_for_share': 'November', 
-                'may_est_percent_for': 'May Predicted'
-            })
-        .plot(
-            kind='bar',
-            y=['November', 'May Predicted'],
-            x='WARD',
-            title='Predicted "for" Percentage by Ward Based on Estimated Turnout'
-        )
-    )
-    plt.gcf()
-    return
-
-
-@app.cell
-def _(mo):
-    mo.md(r"""### <center> November vs. May Predictions: By Ward </center>""")
-    return
-
-
-@app.cell
-def _(m, new_subplot, plt):
-    fig3, (ax7, ax8) = new_subplot()
-    (
-        m.merged_results
-        .rename(
-            columns={
-                'nov_ward_against_count': 'November Against', 
-                'nov_ward_for_count': 'November For'})
-        .plot(
-            kind='bar',
-            y=['November Against', 'November For'],
-            x='WARD',
-            ax=ax7
-        )
-    )
-
-    (
-        m.merged_results
-        .rename(
-            columns={
-                'may_est_total_against': 'May Predicted Against', 
-                'may_est_total_for': 'May Predicted For'})
-        .plot(
-            kind='bar',
-            y=['May Predicted Against', 'May Predicted For'],
-            x='WARD',
-            ax=ax8
-        )
-    )
-    plt.tight_layout()
-    plt.gcf()
-    return ax7, ax8, fig3
-
-
-@app.cell
-def _(m, mo):
-    total_votes = (
-        (_for := m.merged_results['may_est_total_for'].sum()) + 
-        (_against := m.merged_results['may_est_total_against'].sum())
-    )
-
-    mo.md(f"""
-    Model Prediction **For**: {_for.sum()} ({round(_for / total_votes, 4):.2%})  
-    Model Prediction **Against**: {_against.sum()} ({round(_against / total_votes, 4):.2%})
-
-    """
-    )
-    return (total_votes,)
 
 
 if __name__ == "__main__":

@@ -239,10 +239,12 @@ class FindlayVoterFile:
                 df[FindlayEarlyVoteColumns.VOTE_METHOD] = VotingMethod.IN_PERSON
             elif 'By Mail' in f.stem:
                 df[FindlayEarlyVoteColumns.VOTE_METHOD] = VotingMethod.MAIL
+            else:
+                raise ValueError(f"Unknown file name: {f.stem}")
             vote_lists.append(df)
         _current_votes = pd.concat(vote_lists)
-        self.current_votes = _current_votes.drop_duplicates(subset=[FindlayEarlyVoteColumns.VOTER_ID])
         ic("All Early Votes: ", _current_votes[FindlayEarlyVoteColumns.VOTER_ID].count())
+        self.current_votes = _current_votes.drop_duplicates(subset=[FindlayEarlyVoteColumns.VOTER_ID])
         ic("Unique Early Votes: ", self.current_votes[FindlayEarlyVoteColumns.VOTER_ID].nunique())
         return self.current_votes
 
@@ -486,10 +488,6 @@ class FindlayVoterFile:
         general_elections = list(FindlayVoterFileConfig.GENERAL_COLUMNS.keys())
         self.model_data[primary_elections] = self.model_data[primary_elections].astype(bool)
         self.model_data[general_elections] = self.model_data[general_elections].astype(bool)
-        # self.model_data['primary_score'] = self.model_data[primary_elections].sum(axis=1)
-        # self.model_data['general_score'] = self.model_data[general_elections].sum(axis=1)
-        # self.model_data['total_score'] = self.model_data['primary_score'] + self.model_data['general_score']
-        # self.model_data['total_score_share'] = self.model_data['total_score'] / (len(primary_elections) + len(general_elections))
         
 
         self.model_data = self.model_data.merge(calculate_turnout(self.model_data, primary_elections, by_column='AGE_RANGE', district_level='WARD'), on=['AGE_RANGE', 'WARD'], how='left')
