@@ -174,3 +174,4 @@ cython_debug/
 .pypirc
 
 # JRE Ignore Folders
+/src/fcs_may25/__marimo__/

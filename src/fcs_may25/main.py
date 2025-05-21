@@ -10,6 +10,8 @@ from sklearn.compose import ColumnTransformer
 import pandas as pd
 import november_model as pe
 
+vf = pe.voterfile
+print(list(pe.m_data.columns))
 X = pe.m_data[list(set(pe.ml_cat.category_features + pe.ml_cat.interaction_features + pe.ml_cat.numerical_features))]
 y_turnout = pe.m_data["VOTED_NOV_LEVY"]
 y_vote = pe.m_data["nov_for_share"]

@@ -217,13 +217,17 @@ class FindlayVoterFile:
     model_data: pd.DataFrame
     current_votes: pd.DataFrame = None
     election_results: pd.DataFrame = None
+    may_election_results: pd.DataFrame = None
+    both_election_results: pd.DataFrame = None
     precinct_turnout_stats: pd.DataFrame = None
     election_turnout_stats: pd.DataFrame = None
+
     def __init__(self):
         self.load_early_votes()
         self.load_data()
         self.transform_election_data()
-        self.load_election_results()
+        self.load_nov_election_results()
+        self.load_may_election_results()
         self.create_election_turnout_stats()
         self.create_model_dataset()
         self.calculate_statistics()
@@ -351,8 +355,8 @@ class FindlayVoterFile:
                         _turnout_stats.append(_precinct_groupby)
         self.precinct_turnout_stats = pd.concat(_turnout_stats)
     
-    def load_election_results(self):
-        election_results = pd.read_csv(FilePaths.RESULTS).dropna(how='all', axis=1)
+    def load_nov_election_results(self):
+        election_results = pd.read_csv(FilePaths.NOV_RESULTS).dropna(how='all', axis=1)
         election_results[NovemberResultsColumns.FOR] = pd.to_numeric(election_results['for'], errors='coerce').fillna(0)
         election_results[NovemberResultsColumns.AGAINST] = pd.to_numeric(election_results['against'], errors='coerce').fillna(0)
         election_results[NovemberResultsColumns.LEVY_TOTAL] = pd.to_numeric(election_results['total'], errors='coerce').fillna(0)
@@ -384,11 +388,11 @@ class FindlayVoterFile:
         election_results = election_results.merge(precinct_results, left_on=FindlayEarlyVoteColumns.PRECINCT_NAME, right_on=FindlayEarlyVoteColumns.PRECINCT_NAME, how='left')
         election_results['nov_for_share'] = (election_results[NovemberResultsColumns.FOR] / election_results[NovemberResultsColumns.LEVY_TOTAL]).round(4)
         election_results['nov_against_share'] = (election_results[NovemberResultsColumns.AGAINST] / election_results[NovemberResultsColumns.LEVY_TOTAL]).round(4)
-        
+
         # Calculate for and against shares at ward level
         election_results['nov_ward_for_share'] = (election_results['nov_ward_for_count'] / election_results['nov_ward_total_count']).round(4)
         election_results['nov_ward_against_share'] = (election_results['nov_ward_against_count'] / election_results['nov_ward_total_count']).round(4)
-        
+
         # Calculate for and against shares at precinct level
         election_results['nov_precinct_for_share'] = (election_results['nov_precinct_for_count'] / election_results['nov_precinct_total_count']).round(4)
         election_results['nov_precinct_against_share'] = (election_results['nov_precinct_against_count'] / election_results['nov_precinct_total_count']).round(4)
@@ -406,6 +410,73 @@ class FindlayVoterFile:
             _ward_voted_voters = (self.election_results[self.election_results['ward'] == ward]['nov_ward_total_count']).unique()[0]
             _ward_turnout = (_ward_voted_voters / _ward_registered_voters).round(4)
             self.election_results.loc[self.election_results['ward'] == ward, 'nov_ward_turnout'] = _ward_turnout
+
+    def load_may_election_results(self):
+        may_election_results = pd.read_csv(FilePaths.MAY_RESULTS).dropna(how='all', axis=1)
+        may_election_results['Votes For'] = pd.to_numeric(may_election_results['Votes For'], errors='coerce').fillna(0)
+        may_election_results['Votes Against'] = pd.to_numeric(may_election_results['Votes Against'], errors='coerce').fillna(0)
+        may_election_results['Total Votes'] = pd.to_numeric(may_election_results['Total Votes'], errors='coerce').fillna(0)
+        ward_results = may_election_results.groupby('Ward').agg(
+            {
+                'Votes For': 'sum',
+                'Votes Against': 'sum',
+                'Total Votes': 'sum'
+            }
+        ).rename(columns={
+            'Votes For': 'may_ward_for_count',
+            'Votes Against': 'may_ward_against_count',
+            'Total Votes': 'may_ward_total_count'
+        })
+        precinct_results = may_election_results.groupby('Precinct').agg(
+            {
+                'Votes For': 'sum',
+                'Votes Against': 'sum',
+                'Total Votes': 'sum'
+            }
+        ).rename(columns={
+            'Votes For': 'may_precinct_for_count',
+            'Votes Against': 'may_precinct_against_count',
+            'Total Votes': 'may_precinct_total_count'
+        })
+
+        may_election_results = may_election_results.merge(ward_results, left_on='Ward', right_on='Ward', how='left')
+        may_election_results = may_election_results.merge(precinct_results, left_on='Precinct', right_on='Precinct', how='left')
+        may_election_results["may_for_share"] = (
+            may_election_results['Votes For']
+            / may_election_results['Total Votes']
+        ).round(4)
+        may_election_results["may_against_share"] = (
+            may_election_results['Votes Against']
+            / may_election_results['Total Votes']
+        ).round(4)
+
+        # Calculate for and against shares at ward level
+        may_election_results["may_ward_for_share"] = (
+            may_election_results["may_ward_for_count"]
+            / may_election_results["may_ward_total_count"]
+        ).round(4)
+        may_election_results["may_ward_against_share"] = (
+            may_election_results["may_ward_against_count"]
+            / may_election_results["may_ward_total_count"]
+        ).round(4)
+
+        # Calculate for and against shares at precinct level
+        may_election_results["may_precinct_for_share"] = (
+            may_election_results["may_precinct_for_count"]
+            / may_election_results["may_precinct_total_count"]
+        ).round(4)
+        may_election_results["may_precinct_against_share"] = (
+            may_election_results["may_precinct_against_count"]
+            / may_election_results["may_precinct_total_count"]
+        ).round(4)
+        may_election_results["may_for_share"] = (
+            may_election_results["Votes For"] / may_election_results["Total Votes"]
+        ).round(4)
+
+        self.may_election_results = may_election_results
+        self.both_election_results = self.election_results.merge(may_election_results, left_on='ward', right_on='Ward', how='left')
+        _columns = ['Ward', 'Precinct'] + [x for x in self.both_election_results.columns if x.endswith('share') or x.endswith('count')]
+        self.both_election_results = self.both_election_results[_columns]
 
     def create_model_dataset(self):
         self.model_data = self.data.merge(self.election_results, left_on=FindlayVoterFileColumns.PRECINCT_NAME, right_on=FindlayEarlyVoteColumns.PRECINCT_NAME)

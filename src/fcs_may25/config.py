@@ -10,7 +10,8 @@ class FilePaths:
     PREDICTION_FOLDER: Path = DATA_PATH / 'may25_predictions'
     IMAGE_PATH: Path = DATA_PATH / 'images'
 
-    RESULTS: Path = DATA_PATH / 'NOV24-FCS-TAX.csv'
+    NOV_RESULTS: Path = DATA_PATH / 'NOV24-FCS-TAX.csv'
+    MAY_RESULTS: Path = DATA_PATH / 'MAY25-FCS-TAX.csv'
     EARLY_VOTE: Path = DATA_PATH / 'may26_ev'
     DATA: Path = VOTERFILE_PATH / "data/ohio/voterfile/ohio-statewide"
 
