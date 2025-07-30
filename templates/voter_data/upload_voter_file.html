@@ -1,0 +1,73 @@
+{% extends 'base.html' %}
+
+{% block title %}Upload Voter File - Campaign Management{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-8 mx-auto">
+        <div class="card">
+            <div class="card-header">
+                <h3>Upload Voter File</h3>
+            </div>
+            <div class="card-body">
+                <p class="card-text">
+                    Upload a CSV file containing voter data. After upload, you'll be able to specify 
+                    election metadata for any columns in your data.
+                </p>
+                
+                <form method="post" enctype="multipart/form-data">
+                    {% csrf_token %}
+                    <div class="mb-3">
+                        <label for="file" class="form-label">CSV File</label>
+                        <input type="file" class="form-control" id="file" name="file" accept=".csv" required>
+                        <div class="form-text">
+                            Please select a CSV file containing voter data. The first row should contain column headers.
+                        </div>
+                    </div>
+                    
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-primary">Upload File</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        
+        <div class="card mt-4">
+            <div class="card-header">
+                <h5>Expected CSV Format</h5>
+            </div>
+            <div class="card-body">
+                <p>Your CSV file should include the following types of columns:</p>
+                
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6>Required Voter Fields:</h6>
+                        <ul class="list-unstyled">
+                            <li><code>VUID</code> - Voter Unique ID</li>
+                            <li><code>FNAME</code> - First Name</li>
+                            <li><code>LNAME</code> - Last Name</li>
+                            <li><code>COUNTY</code> - County</li>
+                            <li><code>PCT</code> - Precinct</li>
+                        </ul>
+                    </div>
+                    <div class="col-md-6">
+                        <h6>Address Fields:</h6>
+                        <ul class="list-unstyled">
+                            <li><code>RHNUM</code> - Residential House Number</li>
+                            <li><code>RSTNAME</code> - Residential Street Name</li>
+                            <li><code>RCITY</code> - Residential City</li>
+                            <li><code>RZIP</code> - Residential ZIP</li>
+                            <li><code>MADR1, MADR2</code> - Mailing Address</li>
+                        </ul>
+                    </div>
+                </div>
+                
+                <div class="alert alert-info mt-3">
+                    <strong>Note:</strong> Any additional columns can be specified as election data 
+                    in the next step after upload.
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

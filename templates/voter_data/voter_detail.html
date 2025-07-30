@@ -1,0 +1,245 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ voter.get_full_name }} - Voter Details{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2>{{ voter.get_full_name }}</h2>
+            <a href="{% url 'voter_list' %}" class="btn btn-secondary">Back to List</a>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Personal Information -->
+    <div class="col-md-6">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5>Personal Information</h5>
+            </div>
+            <div class="card-body">
+                <dl class="row">
+                    <dt class="col-sm-4">VUID:</dt>
+                    <dd class="col-sm-8"><code>{{ voter.vuid }}</code></dd>
+                    
+                    <dt class="col-sm-4">Full Name:</dt>
+                    <dd class="col-sm-8">{{ voter.get_full_name }}</dd>
+                    
+                    {% if voter.formername %}
+                        <dt class="col-sm-4">Former Name:</dt>
+                        <dd class="col-sm-8">{{ voter.formername }}</dd>
+                    {% endif %}
+                    
+                    <dt class="col-sm-4">Sex:</dt>
+                    <dd class="col-sm-8">{{ voter.get_sex_display|default:"—" }}</dd>
+                    
+                    <dt class="col-sm-4">Date of Birth:</dt>
+                    <dd class="col-sm-8">{{ voter.dob|default:"—" }}</dd>
+                    
+                    <dt class="col-sm-4">Registration Date:</dt>
+                    <dd class="col-sm-8">{{ voter.edr|default:"—" }}</dd>
+                    
+                    <dt class="col-sm-4">Status:</dt>
+                    <dd class="col-sm-8">
+                        {% if voter.status %}
+                            <span class="badge bg-primary">{{ voter.status }}</span>
+                        {% else %}
+                            —
+                        {% endif %}
+                    </dd>
+                </dl>
+            </div>
+        </div>
+    </div>
+    
+    <!-- District Information -->
+    <div class="col-md-6">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5>District Information</h5>
+            </div>
+            <div class="card-body">
+                <dl class="row">
+                    <dt class="col-sm-4">County:</dt>
+                    <dd class="col-sm-8">{{ voter.county|default:"—" }}</dd>
+                    
+                    <dt class="col-sm-4">Precinct:</dt>
+                    <dd class="col-sm-8">{{ voter.pct|default:"—" }}</dd>
+                    
+                    <dt class="col-sm-4">District Level:</dt>
+                    <dd class="col-sm-8">
+                        {% if voter.district_level %}
+                            <span class="badge bg-info">{{ voter.get_district_level_display }}</span>
+                        {% else %}
+                            —
+                        {% endif %}
+                    </dd>
+                    
+                    <dt class="col-sm-4">Office Type:</dt>
+                    <dd class="col-sm-8">{{ voter.office_type|default:"—" }}</dd>
+                </dl>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Address Information -->
+    <div class="col-md-8">
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5>Address Information</h5>
+                <div>
+                    {% if verification_status.is_verified %}
+                        <span class="badge bg-success">Verified</span>
+                    {% else %}
+                        <span class="badge bg-warning">Unverified</span>
+                    {% endif %}
+                    {% if verification_status.has_coordinates %}
+                        <span class="badge bg-info">Geocoded</span>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <h6>Residential Address</h6>
+                        {% if verification_status.residential_address %}
+                            <address>
+                                {{ verification_status.residential_address|linebreaks }}
+                            </address>
+                        {% else %}
+                            <p class="text-muted">No residential address available</p>
+                        {% endif %}
+                        
+                        {% if voter.latitude and voter.longitude %}
+                            <small class="text-muted">
+                                Coordinates: {{ voter.latitude }}, {{ voter.longitude }}
+                            </small>
+                        {% endif %}
+                    </div>
+                    <div class="col-md-6">
+                        <h6>Mailing Address</h6>
+                        {% if verification_status.mailing_address %}
+                            <address>
+                                {{ verification_status.mailing_address|linebreaks }}
+                            </address>
+                        {% else %}
+                            <p class="text-muted">Uses residential address</p>
+                        {% endif %}
+                    </div>
+                </div>
+                
+                {% if verification_status.validation_issues %}
+                    <div class="alert alert-warning mt-3">
+                        <h6>Validation Issues:</h6>
+                        <ul class="mb-0">
+                            {% for issue in verification_status.validation_issues %}
+                                <li>{{ issue }}</li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                {% endif %}
+                
+                <div class="mt-3">
+                    <form method="post" action="{% url 'verify_voter_address' voter.id %}">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-primary">
+                            {% if verification_status.is_verified %}
+                                Re-verify Address
+                            {% else %}
+                                Verify Address
+                            {% endif %}
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Quick Stats -->
+    <div class="col-md-4">
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5>Quick Stats</h5>
+            </div>
+            <div class="card-body">
+                <dl class="row">
+                    <dt class="col-8">Elections:</dt>
+                    <dd class="col-4">{{ election_data.count }}</dd>
+                    
+                    <dt class="col-8">File Origin:</dt>
+                    <dd class="col-4">
+                        {% if voter.file_origin %}
+                            <small>{{ voter.file_origin }}</small>
+                        {% else %}
+                            —
+                        {% endif %}
+                    </dd>
+                    
+                    <dt class="col-8">Created:</dt>
+                    <dd class="col-4">
+                        <small>{{ voter.created_at|date:"M d, Y" }}</small>
+                    </dd>
+                    
+                    <dt class="col-8">Updated:</dt>
+                    <dd class="col-4">
+                        <small>{{ voter.updated_at|date:"M d, Y" }}</small>
+                    </dd>
+                </dl>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Election Data -->
+{% if election_data %}
+    <div class="row">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5>Election Data</h5>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-striped">
+                            <thead>
+                                <tr>
+                                    <th>Election</th>
+                                    <th>Type</th>
+                                    <th>Year</th>
+                                    <th>Date</th>
+                                    <th>Data Type</th>
+                                    <th>Value</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for ed in election_data %}
+                                    <tr>
+                                        <td>{{ ed.election.name }}</td>
+                                        <td>
+                                            {% if ed.election.election_type %}
+                                                <span class="badge bg-secondary">{{ ed.election.get_election_type_display }}</span>
+                                            {% else %}
+                                                —
+                                            {% endif %}
+                                        </td>
+                                        <td>{{ ed.election.year|default:"—" }}</td>
+                                        <td>{{ ed.election.date|default:"—" }}</td>
+                                        <td>
+                                            <span class="badge bg-primary">{{ ed.get_data_type_display }}</span>
+                                        </td>
+                                        <td>{{ ed.value }}</td>
+                                    </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+{% endif %}
+{% endblock %}

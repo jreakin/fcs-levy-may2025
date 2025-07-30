@@ -61,6 +61,21 @@ local_settings.py
 db.sqlite3
 db.sqlite3-journal
 
+# Django media files
+media/
+
+# Django static files (collected)
+staticfiles/
+static_root/
+
+# Django migrations (optional - usually committed)
+# */migrations/*.py
+# */migrations/*.pyc
+
+# Django secret key and environment files
+.env.local
+.env.production
+
 # Flask stuff:
 instance/
 .webassets-cache

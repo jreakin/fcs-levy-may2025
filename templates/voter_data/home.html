@@ -1,0 +1,102 @@
+{% extends 'base.html' %}
+
+{% block title %}Home - Campaign Management System{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12">
+        <div class="jumbotron bg-light p-5 rounded">
+            <h1 class="display-4">Political Campaign Management System</h1>
+            <p class="lead">
+                Enhanced Django system for handling election data, address verification, and district management.
+            </p>
+            <hr class="my-4">
+            <p>
+                This system allows you to upload voter files, specify election metadata for any column, 
+                construct and verify addresses, and manage district information with dynamic office types.
+            </p>
+            <div class="d-grid gap-2 d-md-flex justify-content-md-start">
+                <a class="btn btn-primary btn-lg" href="{% url 'upload_voter_file' %}" role="button">
+                    Upload Voter Data
+                </a>
+                <a class="btn btn-outline-secondary btn-lg" href="{% url 'voter_list' %}" role="button">
+                    Browse Voters
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-5">
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Election Data Handling</h5>
+                <p class="card-text">
+                    Upload CSV files and manually specify election details for any column. 
+                    Support for various data types including voting locations, ballot choices, and turnout data.
+                </p>
+                <a href="{% url 'upload_voter_file' %}" class="btn btn-primary">Get Started</a>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">Address Verification</h5>
+                <p class="card-text">
+                    Automatically construct full addresses from fragmented components and verify them 
+                    using geocoding services. Cross-check with county and precinct data.
+                </p>
+                <a href="{% url 'voter_list' %}" class="btn btn-primary">View Voters</a>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">District Management</h5>
+                <p class="card-text">
+                    Manage district levels (Federal, State, Judicial, County, City) with dynamic 
+                    office type options that update based on the selected district level.
+                </p>
+                <a href="{% url 'election_list' %}" class="btn btn-primary">View Elections</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-5">
+    <div class="col-md-12">
+        <h2>Key Features</h2>
+        <div class="row">
+            <div class="col-md-6">
+                <ul class="list-group list-group-flush">
+                    <li class="list-group-item">
+                        <strong>Generic Election Fields:</strong> Define election metadata for any CSV column
+                    </li>
+                    <li class="list-group-item">
+                        <strong>Address Construction:</strong> Build complete addresses from fragmented data
+                    </li>
+                    <li class="list-group-item">
+                        <strong>Geocoding Verification:</strong> Validate addresses with latitude/longitude
+                    </li>
+                </ul>
+            </div>
+            <div class="col-md-6">
+                <ul class="list-group list-group-flush">
+                    <li class="list-group-item">
+                        <strong>District Specification:</strong> Hierarchical district and office management
+                    </li>
+                    <li class="list-group-item">
+                        <strong>Data Validation:</strong> Cross-check addresses with voting history
+                    </li>
+                    <li class="list-group-item">
+                        <strong>API Endpoints:</strong> RESTful API for data access and integration
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

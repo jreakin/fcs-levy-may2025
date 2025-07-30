@@ -1,0 +1,140 @@
+{% extends 'base.html' %}
+
+{% block title %}Voters - Campaign Management{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2>Voter Records</h2>
+            <a href="{% url 'upload_voter_file' %}" class="btn btn-primary">Upload New Data</a>
+        </div>
+        
+        <!-- Search Form -->
+        <div class="card mb-4">
+            <div class="card-body">
+                <form method="get" class="row g-3">
+                    <div class="col-md-8">
+                        <input type="text" 
+                               name="search" 
+                               value="{{ search }}" 
+                               class="form-control" 
+                               placeholder="Search by name or VUID...">
+                    </div>
+                    <div class="col-md-4">
+                        <div class="d-grid gap-2 d-md-flex">
+                            <button type="submit" class="btn btn-outline-primary">Search</button>
+                            <a href="{% url 'voter_list' %}" class="btn btn-outline-secondary">Clear</a>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+        
+        <!-- Voters Table -->
+        <div class="card">
+            <div class="card-body">
+                {% if page_obj %}
+                    <div class="table-responsive">
+                        <table class="table table-striped">
+                            <thead>
+                                <tr>
+                                    <th>VUID</th>
+                                    <th>Name</th>
+                                    <th>County</th>
+                                    <th>Precinct</th>
+                                    <th>District Level</th>
+                                    <th>Office Type</th>
+                                    <th>Address Verified</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for voter in page_obj %}
+                                    <tr>
+                                        <td>
+                                            <code>{{ voter.vuid }}</code>
+                                        </td>
+                                        <td>
+                                            <strong>{{ voter.fname }} {{ voter.lname }}</strong>
+                                            {% if voter.mname %}
+                                                <br><small class="text-muted">{{ voter.mname }}</small>
+                                            {% endif %}
+                                        </td>
+                                        <td>{{ voter.county|default:"—" }}</td>
+                                        <td>{{ voter.pct|default:"—" }}</td>
+                                        <td>
+                                            {% if voter.district_level %}
+                                                <span class="badge bg-info">{{ voter.get_district_level_display }}</span>
+                                            {% else %}
+                                                —
+                                            {% endif %}
+                                        </td>
+                                        <td>{{ voter.office_type|default:"—" }}</td>
+                                        <td>
+                                            {% if voter.is_verified %}
+                                                <span class="badge bg-success">Verified</span>
+                                            {% else %}
+                                                <span class="badge bg-warning">Unverified</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            <a href="{% url 'voter_detail' voter.id %}" 
+                                               class="btn btn-sm btn-outline-primary">
+                                                View Details
+                                            </a>
+                                        </td>
+                                    </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <!-- Pagination -->
+                    {% if page_obj.has_other_pages %}
+                        <nav aria-label="Voter pagination">
+                            <ul class="pagination justify-content-center">
+                                {% if page_obj.has_previous %}
+                                    <li class="page-item">
+                                        <a class="page-link" href="?page=1{% if search %}&search={{ search }}{% endif %}">First</a>
+                                    </li>
+                                    <li class="page-item">
+                                        <a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if search %}&search={{ search }}{% endif %}">Previous</a>
+                                    </li>
+                                {% endif %}
+                                
+                                <li class="page-item active">
+                                    <span class="page-link">
+                                        Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}
+                                    </span>
+                                </li>
+                                
+                                {% if page_obj.has_next %}
+                                    <li class="page-item">
+                                        <a class="page-link" href="?page={{ page_obj.next_page_number }}{% if search %}&search={{ search }}{% endif %}">Next</a>
+                                    </li>
+                                    <li class="page-item">
+                                        <a class="page-link" href="?page={{ page_obj.paginator.num_pages }}{% if search %}&search={{ search }}{% endif %}">Last</a>
+                                    </li>
+                                {% endif %}
+                            </ul>
+                        </nav>
+                    {% endif %}
+                {% else %}
+                    <div class="text-center py-5">
+                        <h4 class="text-muted">No voters found</h4>
+                        <p class="text-muted">
+                            {% if search %}
+                                No voters match your search criteria.
+                            {% else %}
+                                No voter data has been uploaded yet.
+                            {% endif %}
+                        </p>
+                        <a href="{% url 'upload_voter_file' %}" class="btn btn-primary">Upload Voter Data</a>
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

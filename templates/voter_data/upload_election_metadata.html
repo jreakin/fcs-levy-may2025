@@ -1,0 +1,176 @@
+{% extends 'base.html' %}
+
+{% block title %}Election Metadata - Campaign Management{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header">
+                <h3>Specify Election Metadata</h3>
+                <p class="mb-0">Define election details for any columns that contain election data.</p>
+            </div>
+            <div class="card-body">
+                <form method="post">
+                    {% csrf_token %}
+                    
+                    <!-- District and Office Type Section -->
+                    <div class="row mb-4">
+                        <div class="col-md-12">
+                            <h5>District Information</h5>
+                            <p class="text-muted">Specify the district level and office type for voters in this file.</p>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="district-level" class="form-label">District Level</label>
+                            <select name="district_level" id="district-level" class="form-select">
+                                <option value="">Select Level</option>
+                                {% for value, label in district_levels %}
+                                    <option value="{{ value }}">{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="office-type" class="form-label">Office Type</label>
+                            <select name="office_type" id="office-type" class="form-select">
+                                <option value="">Select Office</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <!-- Election Columns Section -->
+                    <div class="row">
+                        <div class="col-md-12">
+                            <h5>Election Columns</h5>
+                            <p class="text-muted">For each column that contains election data, specify the election details below.</p>
+                            
+                            <div class="table-responsive">
+                                <table class="table table-bordered">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th>Column</th>
+                                            <th>Election Name</th>
+                                            <th>Year</th>
+                                            <th>Type</th>
+                                            <th>Data Type</th>
+                                            <th>Date</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for col in header %}
+                                            <tr>
+                                                <td>
+                                                    <strong>{{ col }}</strong>
+                                                    <br>
+                                                    <small class="text-muted">CSV Column</small>
+                                                </td>
+                                                <td>
+                                                    <input type="text" 
+                                                           name="election_{{ col }}" 
+                                                           class="form-control" 
+                                                           placeholder="e.g., 2024 General Election">
+                                                </td>
+                                                <td>
+                                                    <input type="number" 
+                                                           name="year_{{ col }}" 
+                                                           class="form-control" 
+                                                           min="1900" 
+                                                           max="2100"
+                                                           placeholder="2024">
+                                                </td>
+                                                <td>
+                                                    <select name="type_{{ col }}" class="form-select">
+                                                        <option value="">Select Type</option>
+                                                        <option value="general">General</option>
+                                                        <option value="primary">Primary</option>
+                                                        <option value="special">Special</option>
+                                                        <option value="referendum">Referendum</option>
+                                                    </select>
+                                                </td>
+                                                <td>
+                                                    <select name="data_type_{{ col }}" class="form-select">
+                                                        <option value="">Select Data Type</option>
+                                                        <option value="voted">Voted (Boolean)</option>
+                                                        <option value="location">Voting Location</option>
+                                                        <option value="ballot_type">Ballot Type</option>
+                                                        <option value="ballot_choice">Ballot Choice</option>
+                                                    </select>
+                                                </td>
+                                                <td>
+                                                    <input type="date" 
+                                                           name="date_{{ col }}" 
+                                                           class="form-control">
+                                                </td>
+                                            </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="row mt-4">
+                        <div class="col-md-12">
+                            <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                                <a href="{% url 'upload_voter_file' %}" class="btn btn-secondary">Back</a>
+                                <button type="submit" class="btn btn-primary">Process Data</button>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Office types mapping
+    const officeTypes = {
+        'federal': [
+            {value: 'president', label: 'President'},
+            {value: 'senate', label: 'Senate'},
+            {value: 'house_of_representatives', label: 'House of Representatives'}
+        ],
+        'state': [
+            {value: 'governor', label: 'Governor'},
+            {value: 'state_senate', label: 'State Senate'},
+            {value: 'state_house', label: 'State House'},
+            {value: 'attorney_general', label: 'Attorney General'}
+        ],
+        'judicial': [
+            {value: 'supreme_court_justice', label: 'Supreme Court Justice'},
+            {value: 'district_judge', label: 'District Judge'}
+        ],
+        'county': [
+            {value: 'county_commissioner', label: 'County Commissioner'},
+            {value: 'sheriff', label: 'Sheriff'},
+            {value: 'county_clerk', label: 'County Clerk'}
+        ],
+        'city': [
+            {value: 'mayor', label: 'Mayor'},
+            {value: 'city_council', label: 'City Council'},
+            {value: 'city_treasurer', label: 'City Treasurer'}
+        ]
+    };
+
+    // Update office types when district level changes
+    document.getElementById('district-level').addEventListener('change', function() {
+        const level = this.value;
+        const officeSelect = document.getElementById('office-type');
+        
+        // Clear existing options
+        officeSelect.innerHTML = '<option value="">Select Office</option>';
+        
+        // Add options for selected level
+        if (level && officeTypes[level]) {
+            officeTypes[level].forEach(function(office) {
+                const option = document.createElement('option');
+                option.value = office.value;
+                option.textContent = office.label;
+                officeSelect.appendChild(option);
+            });
+        }
+    });
+</script>
+{% endblock %}

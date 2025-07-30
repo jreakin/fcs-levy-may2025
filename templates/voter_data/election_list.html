@@ -1,0 +1,122 @@
+{% extends 'base.html' %}
+
+{% block title %}Elections - Campaign Management{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2>Elections</h2>
+            <a href="{% url 'upload_voter_file' %}" class="btn btn-primary">Upload New Data</a>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-12">
+        {% if elections %}
+            <div class="card">
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-striped">
+                            <thead>
+                                <tr>
+                                    <th>Election Name</th>
+                                    <th>Type</th>
+                                    <th>Year</th>
+                                    <th>Date</th>
+                                    <th>Voter Records</th>
+                                    <th>Created</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for election in elections %}
+                                    <tr>
+                                        <td>
+                                            <strong>{{ election.name }}</strong>
+                                        </td>
+                                        <td>
+                                            {% if election.election_type %}
+                                                <span class="badge bg-secondary">{{ election.get_election_type_display }}</span>
+                                            {% else %}
+                                                —
+                                            {% endif %}
+                                        </td>
+                                        <td>{{ election.year|default:"—" }}</td>
+                                        <td>{{ election.date|default:"—" }}</td>
+                                        <td>
+                                            <span class="badge bg-info">{{ election.voter_data.count }}</span>
+                                        </td>
+                                        <td>
+                                            <small class="text-muted">{{ election.created_at|date:"M d, Y" }}</small>
+                                        </td>
+                                    </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        {% else %}
+            <div class="card">
+                <div class="card-body text-center py-5">
+                    <h4 class="text-muted">No elections found</h4>
+                    <p class="text-muted">
+                        No election data has been uploaded yet. Upload voter data with election information to see elections here.
+                    </p>
+                    <a href="{% url 'upload_voter_file' %}" class="btn btn-primary">Upload Voter Data</a>
+                </div>
+            </div>
+        {% endif %}
+    </div>
+</div>
+
+{% if elections %}
+    <div class="row mt-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5>Election Statistics</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-3">
+                            <div class="text-center">
+                                <h3 class="text-primary">{{ elections.count }}</h3>
+                                <p class="text-muted">Total Elections</p>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="text-center">
+                                <h3 class="text-success">
+                                    {{ elections|length }}
+                                </h3>
+                                <p class="text-muted">With Data</p>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="text-center">
+                                <h3 class="text-info">
+                                    {% for election in elections %}{{ election.voter_data.count }}{% if not forloop.last %} + {% endif %}{% endfor %}
+                                </h3>
+                                <p class="text-muted">Total Records</p>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="text-center">
+                                <h3 class="text-warning">
+                                    {% for election in elections %}
+                                        {% if election.year %}{{ election.year|add:0 }}{% endif %}
+                                        {% if not forloop.last %}, {% endif %}
+                                    {% endfor %}
+                                </h3>
+                                <p class="text-muted">Years Covered</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+{% endif %}
+{% endblock %}
